@@ -1,5 +1,5 @@
 {
-  "victron_ip": "192.168.1.60",
+  "victron_ip": "192.168.1.100",
   "modbus_port": 502,
   "victron_unit_id": 100,
   "v_cell_critical_high": 3.60,

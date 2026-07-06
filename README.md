@@ -11,7 +11,7 @@ A Python-based automation script designed to clean and process raw financial or 
 
 ### 2. System Health & Backup Monitor (`system_monitor_backup.py`)
 Proactive infrastructure monitoring script with automated backup and alerting capabilities.
-*   **Key Features:** Disk usage health checks, compressed tarball backups, and Telegram Bot API alerts when disk usage exceeds 90%.
+*   **Key Features:** Disk usage health checks, compressed tarball backups, and WhatsApp Cloud API alerts when disk usage exceeds 90%.
 *   **Use Case:** Headless server maintenance, DevOps monitoring routines, and automated log archival.
 
 ### 3. Victron Industrial BMS Safety Supervisor (`victron_industrial_bms_safety.py`)

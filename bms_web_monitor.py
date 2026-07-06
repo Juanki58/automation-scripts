@@ -75,8 +75,9 @@ def load_configuration(config_path: str = CONFIG_PATH) -> dict:
         "battery_capacity_kwh": 10.0,
         "soc_alert_warning": 20.0,
         "soc_alert_critical": 10.0,
-        "telegram_alerts_enabled": False,
-        "telegram_alert_cooldown_s": 3600,
+        "whatsapp_alerts_enabled": False,
+        "whatsapp_alert_cooldown_s": 3600,
+        "whatsapp_recipient": "",
         "plant_name": "B-Intelligent Plant",
         "inverter_unit_id": 225,
         "battery_unit_id": None,
@@ -87,7 +88,13 @@ def load_configuration(config_path: str = CONFIG_PATH) -> dict:
     if not path.exists():
         return defaults
     with open(path, encoding="utf-8") as f:
-        return {**defaults, **json.load(f)}
+        loaded = json.load(f)
+    merged = {**defaults, **loaded}
+    if "whatsapp_alerts_enabled" not in loaded and loaded.get("telegram_alerts_enabled") is not None:
+        merged["whatsapp_alerts_enabled"] = loaded["telegram_alerts_enabled"]
+    if "whatsapp_alert_cooldown_s" not in loaded and loaded.get("telegram_alert_cooldown_s") is not None:
+        merged["whatsapp_alert_cooldown_s"] = loaded["telegram_alert_cooldown_s"]
+    return merged
 
 
 def _to_signed_int16(value: int) -> int:
@@ -155,60 +162,86 @@ def read_modbus_register_w(client: ModbusClient, reg: int, signed: bool = False,
         return 0.0
 
 
-def send_telegram_alert(message: str, bot_token: str | None = None, chat_id: str | None = None) -> bool:
-    bot_token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
-    if not bot_token or not chat_id:
-        logger.info("Telegram simulado: %s", message)
+def send_whatsapp_alert(
+    message: str,
+    access_token: str | None = None,
+    phone_number_id: str | None = None,
+    recipient: str | None = None,
+) -> bool:
+    """Envía alerta vía WhatsApp Cloud API (Meta)."""
+    access_token = access_token or os.getenv("WHATSAPP_ACCESS_TOKEN")
+    phone_number_id = phone_number_id or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    recipient = recipient or os.getenv("WHATSAPP_RECIPIENT")
+    if not access_token or not phone_number_id or not recipient:
+        logger.info("WhatsApp simulado: %s", message)
         return False
 
+    recipient = recipient.lstrip("+").replace(" ", "")
     payload = json.dumps({
-        "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": recipient,
+        "type": "text",
+        "text": {"preview_url": False, "body": message},
     }).encode("utf-8")
     request = urllib.request.Request(
-        f"https://api.telegram.org/bot{bot_token}/sendMessage",
+        f"https://graph.facebook.com/v22.0/{phone_number_id}/messages",
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {access_token}",
+        },
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:
+        with urllib.request.urlopen(request, timeout=15) as response:
             body = json.loads(response.read().decode("utf-8"))
-        return bool(body.get("ok"))
-    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
-        logger.error("Telegram falló: %s", exc)
+        return "messages" in body or body.get("success") is True
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        logger.error("WhatsApp HTTP %s: %s", exc.code, error_body)
+        return False
+    except urllib.error.URLError as exc:
+        logger.error("WhatsApp falló: %s", exc)
         return False
 
 
-def process_telegram_alerts(telemetry: dict, cfg: dict, plant_status: str):
-    if not cfg.get("telegram_alerts_enabled"):
+def process_whatsapp_alerts(telemetry: dict, cfg: dict, plant_status: str):
+    if not cfg.get("whatsapp_alerts_enabled"):
         return
 
     soc = telemetry["soc"]
     plant = cfg.get("plant_name", "Planta")
     now = time.time()
-    cooldown = cfg.get("telegram_alert_cooldown_s", 3600)
+    cooldown = cfg.get("whatsapp_alert_cooldown_s", 3600)
+    recipient = cfg.get("whatsapp_recipient") or None
 
     alerts = []
     if soc <= cfg.get("soc_alert_critical", 10):
-        alerts.append(("critical", f"<b>ALERTA CRÍTICA SoC</b>\n{plant}\nSoC: <code>{soc:.1f}%</code>"))
+        alerts.append((
+            "critical",
+            f"🚨 ALERTA CRÍTICA SoC\n{plant}\nSoC: {soc:.1f}%",
+        ))
     elif soc <= cfg.get("soc_alert_warning", 20):
-        alerts.append(("warning", f"<b>AVISO SoC BAJO</b>\n{plant}\nSoC: <code>{soc:.1f}%</code>"))
+        alerts.append((
+            "warning",
+            f"⚠️ AVISO SoC BAJO\n{plant}\nSoC: {soc:.1f}%",
+        ))
     if plant_status == "CRITICAL":
-        alerts.append(("critical_status", f"<b>ALERTA PLANTA</b>\n{plant}\nEstado: CRÍTICO"))
+        alerts.append((
+            "critical_status",
+            f"🔴 ALERTA PLANTA\n{plant}\nEstado: CRÍTICO",
+        ))
 
-    if "telegram_cooldown" not in st.session_state:
-        st.session_state.telegram_cooldown = {}
+    if "whatsapp_cooldown" not in st.session_state:
+        st.session_state.whatsapp_cooldown = {}
 
     for key, message in alerts:
-        last = st.session_state.telegram_cooldown.get(key, 0)
+        last = st.session_state.whatsapp_cooldown.get(key, 0)
         if now - last >= cooldown:
-            if send_telegram_alert(message):
-                st.session_state.telegram_cooldown[key] = now
-                logger.info("Alerta Telegram enviada: %s", key)
+            if send_whatsapp_alert(message, recipient=recipient):
+                st.session_state.whatsapp_cooldown[key] = now
+                logger.info("Alerta WhatsApp enviada: %s", key)
 
 
 def read_ac_consumption_w(client: ModbusClient, cfg: dict) -> float:
@@ -633,7 +666,7 @@ def render_status_panel(level: str, message: str):
 
 def render_dashboard(cfg: dict, mode: str, telemetry: dict):
     level, message, _ = evaluate_plant_status(telemetry, cfg)
-    process_telegram_alerts(telemetry, cfg, level)
+    process_whatsapp_alerts(telemetry, cfg, level)
     soc = telemetry["soc"]
     inject_corporate_theme()
 
@@ -732,8 +765,8 @@ def main():
         st.markdown(f"**Gateway:** `{cfg['victron_ip']}`")
         st.markdown(f"**Intervalo:** `{cfg['sample_interval_s']} s`")
         st.markdown(f"**Batería:** `{cfg.get('battery_capacity_kwh', 10)} kWh`")
-        tg = "✅ Activas" if cfg.get("telegram_alerts_enabled") else "❌ Off"
-        st.markdown(f"**Telegram:** {tg}")
+        wa = "✅ Activas" if cfg.get("whatsapp_alerts_enabled") else "❌ Off"
+        st.markdown(f"**WhatsApp:** {wa}")
 
     dashboard = st.empty()
     interval = cfg["sample_interval_s"]

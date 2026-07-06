@@ -7,8 +7,8 @@ import tarfile
 import urllib.error
 import urllib.request
 
-TELEGRAM_ALERT_THRESHOLD = 90.0
-TELEGRAM_API_BASE = "https://api.telegram.org/bot{token}/sendMessage"
+WHATSAPP_ALERT_THRESHOLD = 90.0
+WHATSAPP_API_BASE = "https://graph.facebook.com/v22.0/{phone_number_id}/messages"
 
 
 def check_system_health(disk_path="/", threshold_percent=85.0):
@@ -24,48 +24,58 @@ def check_system_health(disk_path="/", threshold_percent=85.0):
     return True, f"OK: Disk usage is safe at {used_percent:.2f}%", used_percent
 
 
-def send_telegram_alert(message, bot_token=None, chat_id=None):
+def send_whatsapp_alert(message, access_token=None, phone_number_id=None, recipient=None):
     """
-    Sends a real Telegram alert via the Bot API when credentials are configured.
+    Sends a real WhatsApp alert via Meta Cloud API when credentials are configured.
     Falls back to a faithful simulation (payload + endpoint) for local demos.
     """
-    bot_token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN")
-    chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
+    access_token = access_token or os.getenv("WHATSAPP_ACCESS_TOKEN")
+    phone_number_id = phone_number_id or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
+    recipient = recipient or os.getenv("WHATSAPP_RECIPIENT")
 
     payload = {
-        "chat_id": chat_id or "<TELEGRAM_CHAT_ID>",
-        "text": message,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": (recipient or "<WHATSAPP_RECIPIENT>").lstrip("+").replace(" ", ""),
+        "type": "text",
+        "text": {"preview_url": False, "body": message},
     }
     payload_bytes = json.dumps(payload).encode("utf-8")
 
-    if not bot_token or not chat_id:
-        print("[TELEGRAM SIMULATION] Credentials not set — showing real API request:")
-        print(f"  POST {TELEGRAM_API_BASE.format(token='<TELEGRAM_BOT_TOKEN>')}")
-        print(f"  Content-Type: application/json")
+    if not access_token or not phone_number_id or not recipient:
+        print("[WHATSAPP SIMULATION] Credentials not set — showing real API request:")
+        print(f"  POST {WHATSAPP_API_BASE.format(phone_number_id='<WHATSAPP_PHONE_NUMBER_ID>')}")
+        print("  Content-Type: application/json")
+        print(f"  Authorization: Bearer <WHATSAPP_ACCESS_TOKEN>")
         print(f"  Body: {json.dumps(payload, indent=2)}")
-        return False, "SIMULATED: Telegram alert payload prepared (set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to send for real)"
+        return False, (
+            "SIMULATED: WhatsApp alert payload prepared "
+            "(set WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_RECIPIENT to send for real)"
+        )
 
-    api_url = TELEGRAM_API_BASE.format(token=bot_token)
+    api_url = WHATSAPP_API_BASE.format(phone_number_id=phone_number_id)
     request = urllib.request.Request(
         api_url,
         data=payload_bytes,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {access_token}",
+        },
         method="POST",
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=10) as response:
+        with urllib.request.urlopen(request, timeout=15) as response:
             response_body = json.loads(response.read().decode("utf-8"))
-        if response_body.get("ok"):
-            return True, f"SENT: Telegram alert delivered (message_id={response_body['result']['message_id']})"
-        return False, f"FAILED: Telegram API rejected the alert — {response_body.get('description', 'unknown error')}"
+        if "messages" in response_body:
+            message_id = response_body["messages"][0].get("id", "unknown")
+            return True, f"SENT: WhatsApp alert delivered (message_id={message_id})"
+        return False, f"FAILED: WhatsApp API rejected the alert — {response_body}"
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")
-        return False, f"FAILED: Telegram HTTP {exc.code} — {error_body}"
+        return False, f"FAILED: WhatsApp HTTP {exc.code} — {error_body}"
     except urllib.error.URLError as exc:
-        return False, f"FAILED: Could not reach Telegram API — {exc.reason}"
+        return False, f"FAILED: Could not reach WhatsApp API — {exc.reason}"
 
 
 def create_secure_backup(source_dir, output_filename):
@@ -103,16 +113,17 @@ if __name__ == "__main__":
     backup_status, backup_msg = create_secure_backup(dummy_config_dir, "prod_env_backup")
     print(backup_msg)
 
-    if disk_usage_percent > TELEGRAM_ALERT_THRESHOLD:
+    if disk_usage_percent > WHATSAPP_ALERT_THRESHOLD:
+        host = os.uname().nodename if hasattr(os, "uname") else os.environ.get("COMPUTERNAME", "unknown")
         alert_message = (
-            "<b>DISK ALERT</b>\n"
-            f"Usage: <code>{disk_usage_percent:.2f}%</code>\n"
-            f"Threshold: <code>{TELEGRAM_ALERT_THRESHOLD:.0f}%</code>\n"
-            f"Host: <code>{os.uname().nodename if hasattr(os, 'uname') else os.environ.get('COMPUTERNAME', 'unknown')}</code>\n"
-            "Action required: free disk space immediately."
+            "💾 ALERTA DISCO\n"
+            f"Uso: {disk_usage_percent:.2f}%\n"
+            f"Umbral: {WHATSAPP_ALERT_THRESHOLD:.0f}%\n"
+            f"Host: {host}\n"
+            "Acción requerida: liberar espacio en disco."
         )
-        telegram_status, telegram_msg = send_telegram_alert(alert_message)
-        print(f"[TELEGRAM ALERT] {telegram_msg}")
+        whatsapp_status, whatsapp_msg = send_whatsapp_alert(alert_message)
+        print(f"[WHATSAPP ALERT] {whatsapp_msg}")
     elif not health_status or "FAILURE" in backup_msg:
         print("[ALERT DISPATCH] Routing high-priority alert payload to DevOps monitoring channel...")
     else:

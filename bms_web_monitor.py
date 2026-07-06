@@ -6,8 +6,11 @@ Monitor visual en tiempo real con Streamlit.
 import json
 import logging
 import math
+import os
 import sys
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -66,6 +69,15 @@ def load_configuration(config_path: str = CONFIG_PATH) -> dict:
         "modbus_reg_ac_consumption_l1": 817,
         "modbus_reg_ac_consumption_l2": 818,
         "modbus_reg_ac_consumption_l3": 819,
+        "modbus_reg_pv_power": 850,
+        "modbus_reg_grid_power": 820,
+        "modbus_reg_battery_power": 842,
+        "battery_capacity_kwh": 10.0,
+        "soc_alert_warning": 20.0,
+        "soc_alert_critical": 10.0,
+        "telegram_alerts_enabled": False,
+        "telegram_alert_cooldown_s": 3600,
+        "plant_name": "B-Intelligent Plant",
         "inverter_unit_id": 225,
         "battery_unit_id": None,
         "modbus_reg_battery_temperature": 282,
@@ -88,6 +100,115 @@ def format_house_power(watts: float) -> tuple[str, str]:
     if watts >= 1000:
         return f"{watts / 1000:.2f} kW", f"{watts:.0f} W instantáneos"
     return f"{watts:.0f} W", "Consumo AC instantáneo de la vivienda"
+
+
+def format_power_watts(watts: float) -> str:
+    watts = abs(watts)
+    if watts >= 1000:
+        return f"{watts / 1000:.2f} kW"
+    return f"{watts:.0f} W"
+
+
+def format_grid_power(watts: float) -> tuple[str, str]:
+    if watts > 50:
+        return format_power_watts(watts), "Importando de la red eléctrica"
+    if watts < -50:
+        return format_power_watts(watts), "Exportando excedente a la red"
+    return "0 W", "Red en equilibrio"
+
+
+def format_battery_power(watts: float) -> tuple[str, str]:
+    if watts > 50:
+        return format_power_watts(watts), "Batería cargando"
+    if watts < -50:
+        return format_power_watts(watts), "Batería descargando"
+    return "0 W", "Batería en reposo"
+
+
+def estimate_autonomy_hours(soc_percent: float, capacity_kwh: float, consumption_w: float) -> float | None:
+    """Estima autonomía: energía usable / consumo instantáneo."""
+    if consumption_w <= 50 or capacity_kwh <= 0:
+        return None
+    available_wh = capacity_kwh * 1000.0 * (soc_percent / 100.0)
+    return available_wh / consumption_w
+
+
+def format_autonomy(hours: float | None) -> str:
+    if hours is None:
+        return "— (consumo muy bajo)"
+    if hours >= 24:
+        return f"{hours / 24:.1f} días"
+    return f"{hours:.1f} h"
+
+
+def read_modbus_register_w(client: ModbusClient, reg: int, signed: bool = False, label: str = "") -> float:
+    try:
+        regs = client.read_holding_registers(reg, 1)
+        if not regs:
+            logger.warning("Reg %s (%s): lectura vacía", reg, label)
+            return 0.0
+        value = _to_signed_int16(regs[0]) if signed else regs[0]
+        logger.info("Potencia %s — reg %s: %s W", label, reg, value)
+        return float(value)
+    except Exception as exc:
+        logger.error("ERROR reg %s (%s): %s: %s", reg, label, type(exc).__name__, exc)
+        return 0.0
+
+
+def send_telegram_alert(message: str, bot_token: str | None = None, chat_id: str | None = None) -> bool:
+    bot_token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID")
+    if not bot_token or not chat_id:
+        logger.info("Telegram simulado: %s", message)
+        return False
+
+    payload = json.dumps({
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        f"https://api.telegram.org/bot{bot_token}/sendMessage",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            body = json.loads(response.read().decode("utf-8"))
+        return bool(body.get("ok"))
+    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
+        logger.error("Telegram falló: %s", exc)
+        return False
+
+
+def process_telegram_alerts(telemetry: dict, cfg: dict, plant_status: str):
+    if not cfg.get("telegram_alerts_enabled"):
+        return
+
+    soc = telemetry["soc"]
+    plant = cfg.get("plant_name", "Planta")
+    now = time.time()
+    cooldown = cfg.get("telegram_alert_cooldown_s", 3600)
+
+    alerts = []
+    if soc <= cfg.get("soc_alert_critical", 10):
+        alerts.append(("critical", f"<b>ALERTA CRÍTICA SoC</b>\n{plant}\nSoC: <code>{soc:.1f}%</code>"))
+    elif soc <= cfg.get("soc_alert_warning", 20):
+        alerts.append(("warning", f"<b>AVISO SoC BAJO</b>\n{plant}\nSoC: <code>{soc:.1f}%</code>"))
+    if plant_status == "CRITICAL":
+        alerts.append(("critical_status", f"<b>ALERTA PLANTA</b>\n{plant}\nEstado: CRÍTICO"))
+
+    if "telegram_cooldown" not in st.session_state:
+        st.session_state.telegram_cooldown = {}
+
+    for key, message in alerts:
+        last = st.session_state.telegram_cooldown.get(key, 0)
+        if now - last >= cooldown:
+            if send_telegram_alert(message):
+                st.session_state.telegram_cooldown[key] = now
+                logger.info("Alerta Telegram enviada: %s", key)
 
 
 def read_ac_consumption_w(client: ModbusClient, cfg: dict) -> float:
@@ -123,6 +244,10 @@ def read_simulated_telemetry(cfg: dict) -> dict:
     soc = soc_min + (soc_max - soc_min) * (0.5 + 0.5 * math.sin(phase))
 
     house_w = 780 + 120 * math.sin(time.time() / 15)
+    pv_w = max(0, 1200 + 400 * math.sin(time.time() / 25))
+    battery_w = -350 + 200 * math.sin(time.time() / 18)
+    grid_w = house_w - pv_w - battery_w
+    autonomy = estimate_autonomy_hours(soc, cfg.get("battery_capacity_kwh", 10.0), house_w)
 
     return {
         "highest_cell_voltage": 3.35,
@@ -132,6 +257,10 @@ def read_simulated_telemetry(cfg: dict) -> dict:
         "soc": round(soc, 1),
         "pack_voltage": 53.6,
         "house_consumption_w": round(house_w, 0),
+        "pv_power_w": round(pv_w, 0),
+        "battery_power_w": round(battery_w, 0),
+        "grid_power_w": round(grid_w, 0),
+        "autonomy_hours": autonomy,
         "source": "simulated",
         "error": None,
     }
@@ -275,6 +404,17 @@ def read_victron_modbus_telemetry(cfg: dict) -> dict:
             logger.error("ERROR lectura consumo casa: %s: %s", type(exc).__name__, exc)
             house_consumption_w = 0.0
 
+        pv_power_w = read_modbus_register_w(client, cfg["modbus_reg_pv_power"], signed=False, label="PV")
+        battery_power_w = read_modbus_register_w(
+            client, cfg["modbus_reg_battery_power"], signed=True, label="Batería"
+        )
+        grid_power_w = read_modbus_register_w(
+            client, cfg["modbus_reg_grid_power"], signed=True, label="Red"
+        )
+        autonomy_hours = estimate_autonomy_hours(
+            soc, cfg.get("battery_capacity_kwh", 10.0), house_consumption_w
+        )
+
         cell_count = cfg["cell_count"]
         spread = cfg["cell_spread_v"]
         v_avg = pack_voltage / cell_count
@@ -287,6 +427,10 @@ def read_victron_modbus_telemetry(cfg: dict) -> dict:
             "soc": round(soc, 1),
             "pack_voltage": round(pack_voltage, 2),
             "house_consumption_w": round(house_consumption_w, 0),
+            "pv_power_w": round(pv_power_w, 0),
+            "battery_power_w": round(battery_power_w, 0),
+            "grid_power_w": round(grid_power_w, 0),
+            "autonomy_hours": autonomy_hours,
             "raw_soc": raw_soc,
             "source": "modbus",
             "error": None,
@@ -384,6 +528,26 @@ def inject_corporate_theme():
                 font-size: 0.75rem;
                 margin-top: 0.15rem;
             }}
+            .autonomy-line {{
+                color: {COLOR_ACCENT};
+                font-size: 1.05rem;
+                font-weight: 600;
+                margin-top: 0.75rem;
+            }}
+            .flow-strip {{
+                display: flex;
+                justify-content: space-between;
+                gap: 0.5rem;
+                background: {COLOR_SURFACE};
+                border: 1px solid {COLOR_BORDER};
+                border-radius: 12px;
+                padding: 0.9rem 1.2rem;
+                margin-bottom: 1rem;
+                font-size: 0.88rem;
+                color: {COLOR_TEXT_MUTED};
+            }}
+            .flow-item {{ text-align: center; flex: 1; }}
+            .flow-item strong {{ color: {COLOR_TEXT}; display: block; font-size: 1rem; margin-top: 0.2rem; }}
             .metric-card {{ background: {COLOR_SURFACE}; border: 1px solid {COLOR_BORDER}; border-radius: 14px; padding: 1.4rem 1.6rem; min-height: 170px; }}
             .metric-label {{ color: {COLOR_ACCENT}; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 0.8rem; }}
             .metric-value {{ color: {COLOR_TEXT}; font-size: 2.6rem; font-weight: 700; line-height: 1; margin-bottom: 0.5rem; }}
@@ -400,8 +564,9 @@ def inject_corporate_theme():
     )
 
 
-def render_soc_card(soc: float):
+def render_soc_card(soc: float, autonomy_hours: float | None, capacity_kwh: float):
     segment_bar = build_soc_segment_bar(soc)
+    autonomy_text = format_autonomy(autonomy_hours)
     st.markdown(
         f"""
         <div class="soc-card">
@@ -409,6 +574,25 @@ def render_soc_card(soc: float):
             <div class="soc-value">⚡ SoC: {soc:.1f}%</div>
             {segment_bar}
             <div class="soc-scale"><span>0%</span><span>100%</span></div>
+            <div class="autonomy-line">⏱ Autonomía estimada: {autonomy_text} · Banco {capacity_kwh:.1f} kWh</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_energy_flow_strip(telemetry: dict):
+    pv = telemetry.get("pv_power_w", 0)
+    load = telemetry.get("house_consumption_w", 0)
+    bat = telemetry.get("battery_power_w", 0)
+    grid = telemetry.get("grid_power_w", 0)
+    st.markdown(
+        f"""
+        <div class="flow-strip">
+            <div class="flow-item">☀️ Solar<strong>{format_power_watts(pv)}</strong></div>
+            <div class="flow-item">🏠 Consumo<strong>{format_power_watts(load)}</strong></div>
+            <div class="flow-item">🔋 Batería<strong>{format_power_watts(bat)}</strong></div>
+            <div class="flow-item">🔌 Red<strong>{format_power_watts(grid)}</strong></div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -449,6 +633,7 @@ def render_status_panel(level: str, message: str):
 
 def render_dashboard(cfg: dict, mode: str, telemetry: dict):
     level, message, _ = evaluate_plant_status(telemetry, cfg)
+    process_telegram_alerts(telemetry, cfg, level)
     soc = telemetry["soc"]
     inject_corporate_theme()
 
@@ -467,17 +652,22 @@ def render_dashboard(cfg: dict, mode: str, telemetry: dict):
     st.markdown('<p class="brand-tag">B-Intelligent</p>', unsafe_allow_html=True)
     st.markdown('<h1 class="brand-title">BMS Cloud Auditor</h1>', unsafe_allow_html=True)
     st.markdown(
-        f'<p class="brand-subtitle">Color Control GX · {cfg["victron_ip"]}:{cfg["modbus_port"]} · Unit ID {cfg["victron_unit_id"]}</p>',
+        f'<p class="brand-subtitle">{cfg.get("plant_name", "B-Intelligent")} · Color Control GX · {cfg["victron_ip"]}:{cfg["modbus_port"]}</p>',
         unsafe_allow_html=True,
     )
 
-    render_soc_card(soc)
+    render_soc_card(soc, telemetry.get("autonomy_hours"), cfg.get("battery_capacity_kwh", 10.0))
+    render_energy_flow_strip(telemetry)
 
     power_value, power_detail = format_house_power(telemetry.get("house_consumption_w", 0.0))
+    pv_value = format_power_watts(telemetry.get("pv_power_w", 0))
+    bat_value, bat_detail = format_battery_power(telemetry.get("battery_power_w", 0))
+    grid_value, grid_detail = format_grid_power(telemetry.get("grid_power_w", 0))
+    modbus_note = "Victron Modbus" if telemetry["source"] == "modbus" else "Simulación"
 
     col1, col2, col3 = st.columns(3, gap="medium")
     with col1:
-        cell_note = "Pack Victron Modbus" if telemetry["source"] == "modbus" else "Simulación laboratorio"
+        cell_note = modbus_note
         render_metric_card(
             "Voltaje de Celdas",
             f"{v_max:.2f} V",
@@ -490,12 +680,15 @@ def render_dashboard(cfg: dict, mode: str, telemetry: dict):
             f"Mínima: {t_min:.1f} °C · Rango: {t_max - t_min:.1f} °C",
         )
     with col3:
-        source_note = "Victron reg 817" if telemetry["source"] == "modbus" else "Simulación laboratorio"
-        render_metric_card(
-            "Consumo de la Casa",
-            power_value,
-            f"{power_detail} · {source_note}",
-        )
+        render_metric_card("Consumo de la Casa", power_value, f"{power_detail} · reg 817")
+
+    col4, col5, col6 = st.columns(3, gap="medium")
+    with col4:
+        render_metric_card("Producción Solar", pv_value, f"Potencia PV instantánea · reg 850 · {modbus_note}")
+    with col5:
+        render_metric_card("Potencia Batería", bat_value, f"{bat_detail} · reg 842 · {modbus_note}")
+    with col6:
+        render_metric_card("Potencia de Red", grid_value, f"{grid_detail} · reg 820 · {modbus_note}")
 
     render_status_panel(level, message)
 
@@ -538,6 +731,9 @@ def main():
         st.markdown("---")
         st.markdown(f"**Gateway:** `{cfg['victron_ip']}`")
         st.markdown(f"**Intervalo:** `{cfg['sample_interval_s']} s`")
+        st.markdown(f"**Batería:** `{cfg.get('battery_capacity_kwh', 10)} kWh`")
+        tg = "✅ Activas" if cfg.get("telegram_alerts_enabled") else "❌ Off"
+        st.markdown(f"**Telegram:** {tg}")
 
     dashboard = st.empty()
     interval = cfg["sample_interval_s"]

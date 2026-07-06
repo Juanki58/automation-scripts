@@ -149,6 +149,106 @@ def format_autonomy(hours: float | None) -> str:
     return f"{hours:.1f} h"
 
 
+def analizar_salud_celdas(voltajes_celdas: list[float]) -> dict:
+    n = len(voltajes_celdas)
+    if n == 0:
+        return {
+            "drift_mv": 0,
+            "desviacion_estandar_mv": 0,
+            "estado": "Sin datos",
+            "tipo_alerta": "info",
+            "media_v": 0,
+        }
+
+    v_max = max(voltajes_celdas)
+    v_min = min(voltajes_celdas)
+    drift_mv = (v_max - v_min) * 1000
+
+    media = sum(voltajes_celdas) / n
+    varianza = sum((x - media) ** 2 for x in voltajes_celdas) / n
+    desviacion_estandar_mv = math.sqrt(varianza) * 1000
+
+    if desviacion_estandar_mv < 10:
+        estado = "Excelente 🟢"
+        tipo_alerta = "success"
+    elif desviacion_estandar_mv < 25:
+        estado = "Normal / Bueno 🟡"
+        tipo_alerta = "info"
+    elif desviacion_estandar_mv < 50:
+        estado = "Desequilibrio detectado 🟠"
+        tipo_alerta = "warning"
+    else:
+        estado = "CRÍTICO (Revisar celdas/busbars) 🔴"
+        tipo_alerta = "error"
+
+    return {
+        "drift_mv": round(drift_mv, 1),
+        "desviacion_estandar_mv": round(desviacion_estandar_mv, 1),
+        "estado": estado,
+        "tipo_alerta": tipo_alerta,
+        "media_v": round(media, 3),
+    }
+
+
+def build_simulated_cell_voltages(cell_count: int, t: float | None = None) -> list[float]:
+    t = t or time.time()
+    base = 3.322 + 0.003 * math.sin(t / 30)
+    return [
+        round(base + 0.002 * math.sin(t / 7 + i * 0.9) + 0.001 * math.sin(i * 1.7), 3)
+        for i in range(cell_count)
+    ]
+
+
+def build_estimated_cell_voltages(v_min: float, v_max: float, cell_count: int) -> list[float]:
+    if cell_count <= 0:
+        return []
+    if cell_count == 1:
+        return [round(v_min, 3)]
+    step = (v_max - v_min) / (cell_count - 1)
+    return [round(v_min + i * step, 3) for i in range(cell_count)]
+
+
+def render_cell_health_sidebar(telemetry: dict, cfg: dict):
+    voltajes = telemetry.get("cell_voltages") or []
+    salud = analizar_salud_celdas(voltajes)
+    source = telemetry.get("cell_voltage_source", "desconocido")
+
+    st.markdown("---")
+    st.subheader("🏥 Salud del Banco LiFePO4")
+    st.caption(f"Fuente: {source} · {len(voltajes)} celdas · media {salud['media_v']:.3f} V")
+
+    if salud["tipo_alerta"] == "success":
+        st.success(f"Estado: {salud['estado']}")
+    elif salud["tipo_alerta"] == "info":
+        st.info(f"Estado: {salud['estado']}")
+    elif salud["tipo_alerta"] == "warning":
+        st.warning(f"Estado: {salud['estado']}")
+    else:
+        st.error(f"Estado: {salud['estado']}")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric(
+            label="Desviación Est.",
+            value=f"{salud['desviacion_estandar_mv']} mV",
+            help="Dispersión media entre celdas. Lo ideal es mantenerla por debajo de 15 mV en operación.",
+        )
+    with col2:
+        st.metric(
+            label="Dispersión (Drift)",
+            value=f"{salud['drift_mv']} mV",
+            help="Diferencia entre la celda con voltaje más alto y la más baja (Vmax − Vmin).",
+        )
+
+    with st.expander("ℹ️ ¿Por qué importa la Desviación Estándar?"):
+        st.write(
+            "A diferencia del drift clásico, la desviación estándar evalúa el comportamiento "
+            "del bloque completo de celdas. Si sube de forma persistente al mismo SoC, avisa de "
+            "envejecimiento prematuro o resistencia anómala en bornes (busbars) antes de que "
+            "salte la protección del JK BMS."
+        )
+
+
 def read_modbus_register_w(client: ModbusClient, reg: int, signed: bool = False, label: str = "") -> float:
     try:
         regs = client.read_holding_registers(reg, 1)
@@ -240,19 +340,22 @@ def read_simulated_telemetry(cfg: dict) -> dict:
     battery_w = -350 + 200 * math.sin(time.time() / 18)
     grid_w = house_w - pv_w - battery_w
     autonomy = estimate_autonomy_hours(soc, cfg.get("battery_capacity_kwh", 10.0), house_w)
+    cell_voltages = build_simulated_cell_voltages(cfg["cell_count"])
 
     return {
-        "highest_cell_voltage": 3.35,
-        "lowest_cell_voltage": 3.31,
+        "highest_cell_voltage": max(cell_voltages),
+        "lowest_cell_voltage": min(cell_voltages),
         "max_pack_temperature": 28.5,
         "min_pack_temperature": 27.0,
         "soc": round(soc, 1),
-        "pack_voltage": 53.6,
+        "pack_voltage": round(sum(cell_voltages), 2),
         "house_consumption_w": round(house_w, 0),
         "pv_power_w": round(pv_w, 0),
         "battery_power_w": round(battery_w, 0),
         "grid_power_w": round(grid_w, 0),
         "autonomy_hours": autonomy,
+        "cell_voltages": cell_voltages,
+        "cell_voltage_source": "Simulación laboratorio (JK)",
         "source": "simulated",
         "error": None,
     }
@@ -410,10 +513,13 @@ def read_victron_modbus_telemetry(cfg: dict) -> dict:
         cell_count = cfg["cell_count"]
         spread = cfg["cell_spread_v"]
         v_avg = pack_voltage / cell_count
+        v_max = round(v_avg + spread / 2, 3)
+        v_min = round(v_avg - spread / 2, 3)
+        cell_voltages = build_estimated_cell_voltages(v_min, v_max, cell_count)
 
         return {
-            "highest_cell_voltage": round(v_avg + spread / 2, 3),
-            "lowest_cell_voltage": round(v_avg - spread / 2, 3),
+            "highest_cell_voltage": max(cell_voltages),
+            "lowest_cell_voltage": min(cell_voltages),
             "max_pack_temperature": round(temperature, 1),
             "min_pack_temperature": round(temperature - 1.0, 1),
             "soc": round(soc, 1),
@@ -423,6 +529,8 @@ def read_victron_modbus_telemetry(cfg: dict) -> dict:
             "battery_power_w": round(battery_power_w, 0),
             "grid_power_w": round(grid_power_w, 0),
             "autonomy_hours": autonomy_hours,
+            "cell_voltages": cell_voltages,
+            "cell_voltage_source": "Estimado desde pack Victron",
             "raw_soc": raw_soc,
             "source": "modbus",
             "error": None,
@@ -727,11 +835,14 @@ def main():
         wa = "✅ Activas" if cfg.get("whatsapp_alerts_enabled") else "❌ Off"
         st.markdown(f"**WhatsApp:** {wa}")
 
+    cell_health_panel = st.sidebar.empty()
     dashboard = st.empty()
     interval = cfg["sample_interval_s"]
 
     while True:
         telemetry = fetch_telemetry(mode, cfg)
+        with cell_health_panel.container():
+            render_cell_health_sidebar(telemetry, cfg)
         with dashboard.container():
             render_dashboard(cfg, mode, telemetry)
         time.sleep(interval)

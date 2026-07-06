@@ -6,16 +6,15 @@ Monitor visual en tiempo real con Streamlit.
 import json
 import logging
 import math
-import os
 import sys
 import time
-import urllib.error
-import urllib.request
 from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
 from pyModbusTCP.client import ModbusClient
+
+from whatsapp_alerts import send_whatsapp_alert
 
 logging.basicConfig(
     level=logging.INFO,
@@ -78,6 +77,8 @@ def load_configuration(config_path: str = CONFIG_PATH) -> dict:
         "whatsapp_alerts_enabled": False,
         "whatsapp_alert_cooldown_s": 3600,
         "whatsapp_recipient": "",
+        "whatsapp_template_name": "alerta_bintelligent",
+        "whatsapp_template_language": "es",
         "plant_name": "B-Intelligent Plant",
         "inverter_unit_id": 225,
         "battery_unit_id": None,
@@ -162,50 +163,6 @@ def read_modbus_register_w(client: ModbusClient, reg: int, signed: bool = False,
         return 0.0
 
 
-def send_whatsapp_alert(
-    message: str,
-    access_token: str | None = None,
-    phone_number_id: str | None = None,
-    recipient: str | None = None,
-) -> bool:
-    """Envía alerta vía WhatsApp Cloud API (Meta)."""
-    access_token = access_token or os.getenv("WHATSAPP_ACCESS_TOKEN")
-    phone_number_id = phone_number_id or os.getenv("WHATSAPP_PHONE_NUMBER_ID")
-    recipient = recipient or os.getenv("WHATSAPP_RECIPIENT")
-    if not access_token or not phone_number_id or not recipient:
-        logger.info("WhatsApp simulado: %s", message)
-        return False
-
-    recipient = recipient.lstrip("+").replace(" ", "")
-    payload = json.dumps({
-        "messaging_product": "whatsapp",
-        "recipient_type": "individual",
-        "to": recipient,
-        "type": "text",
-        "text": {"preview_url": False, "body": message},
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        f"https://graph.facebook.com/v22.0/{phone_number_id}/messages",
-        data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {access_token}",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            body = json.loads(response.read().decode("utf-8"))
-        return "messages" in body or body.get("success") is True
-    except urllib.error.HTTPError as exc:
-        error_body = exc.read().decode("utf-8", errors="replace")
-        logger.error("WhatsApp HTTP %s: %s", exc.code, error_body)
-        return False
-    except urllib.error.URLError as exc:
-        logger.error("WhatsApp falló: %s", exc)
-        return False
-
-
 def process_whatsapp_alerts(telemetry: dict, cfg: dict, plant_status: str):
     if not cfg.get("whatsapp_alerts_enabled"):
         return
@@ -215,33 +172,35 @@ def process_whatsapp_alerts(telemetry: dict, cfg: dict, plant_status: str):
     now = time.time()
     cooldown = cfg.get("whatsapp_alert_cooldown_s", 3600)
     recipient = cfg.get("whatsapp_recipient") or None
+    template_name = cfg.get("whatsapp_template_name")
+    template_language = cfg.get("whatsapp_template_language")
 
     alerts = []
     if soc <= cfg.get("soc_alert_critical", 10):
-        alerts.append((
-            "critical",
-            f"🚨 ALERTA CRÍTICA SoC\n{plant}\nSoC: {soc:.1f}%",
-        ))
+        alerts.append(("critical", f"SoC crítico: {soc:.1f}%"))
     elif soc <= cfg.get("soc_alert_warning", 20):
-        alerts.append((
-            "warning",
-            f"⚠️ AVISO SoC BAJO\n{plant}\nSoC: {soc:.1f}%",
-        ))
+        alerts.append(("warning", f"SoC bajo: {soc:.1f}%"))
     if plant_status == "CRITICAL":
-        alerts.append((
-            "critical_status",
-            f"🔴 ALERTA PLANTA\n{plant}\nEstado: CRÍTICO",
-        ))
+        alerts.append(("critical_status", "Estado de planta: CRÍTICO"))
 
     if "whatsapp_cooldown" not in st.session_state:
         st.session_state.whatsapp_cooldown = {}
 
-    for key, message in alerts:
+    for key, message_text in alerts:
         last = st.session_state.whatsapp_cooldown.get(key, 0)
         if now - last >= cooldown:
-            if send_whatsapp_alert(message, recipient=recipient):
+            ok, detail = send_whatsapp_alert(
+                message_text,
+                plant_name=plant,
+                recipient=recipient,
+                template_name=template_name,
+                template_language=template_language,
+            )
+            if ok:
                 st.session_state.whatsapp_cooldown[key] = now
                 logger.info("Alerta WhatsApp enviada: %s", key)
+            else:
+                logger.warning("WhatsApp no enviado (%s): %s", key, detail)
 
 
 def read_ac_consumption_w(client: ModbusClient, cfg: dict) -> float:

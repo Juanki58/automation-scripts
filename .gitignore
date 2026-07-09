@@ -7,3 +7,4 @@ config.json
 # Artefactos locales de ejecución
 __pycache__/
 *.tar.gz
+*.stl

@@ -27,20 +27,37 @@ CONFIG_PATH = "config.json"
 MODE_SIM = "Modo Laboratorio (Simulado)"
 MODE_REAL = "Modo Planta Real (Victron Modbus)"
 
-COLOR_BG = "#0a1628"
-COLOR_SURFACE = "#132238"
-COLOR_BORDER = "#2a4a72"
-COLOR_TEXT = "#f0f4f8"
-COLOR_TEXT_MUTED = "#8fa3bf"
-COLOR_ACCENT = "#00d4aa"
-COLOR_GREEN = "#00e676"
-COLOR_YELLOW = "#ffc107"
-COLOR_RED = "#ff5252"
-COLOR_GREEN_DARK = "#0d4d2a"
-COLOR_SOC_ON = "#ff8c00"
-COLOR_SOC_ON_GLOW = "#ffb347"
-COLOR_SOC_OFF = "#152238"
+COLOR_BG = "#060d18"
+COLOR_BG_GRADIENT = "linear-gradient(145deg, #060d18 0%, #0a1a32 45%, #0d2847 100%)"
+COLOR_SURFACE = "#0f1e35"
+COLOR_SURFACE_GRADIENT = "linear-gradient(160deg, rgba(15, 30, 53, 0.95) 0%, rgba(18, 40, 72, 0.88) 100%)"
+COLOR_BORDER = "#2a5a9a"
+COLOR_TEXT = "#f5f8ff"
+COLOR_TEXT_MUTED = "#9eb8d9"
+COLOR_ACCENT = "#00f5d4"
+COLOR_ACCENT_2 = "#7b61ff"
+COLOR_GREEN = "#00ff88"
+COLOR_YELLOW = "#ffd93d"
+COLOR_RED = "#ff4757"
+COLOR_ORANGE = "#ff9f1c"
+COLOR_GREEN_DARK = "linear-gradient(135deg, #0a3d28 0%, #0d5c3a 100%)"
+COLOR_SOC_ON = "#ff9f1c"
+COLOR_SOC_ON_GLOW = "#ffd93d"
+COLOR_SOC_OFF = "#12243d"
+COLOR_SOLAR = "#ffd93d"
+COLOR_LOAD = "#4fc3f7"
+COLOR_BATTERY = "#00e676"
+COLOR_GRID = "#b388ff"
 SOC_BAR_SEGMENTS = 20
+
+METRIC_ACCENTS = {
+    "cells": "#00f5d4",
+    "temperature": "#ff6b6b",
+    "consumption": "#4fc3f7",
+    "solar": "#ffd93d",
+    "battery": "#00e676",
+    "grid": "#b388ff",
+}
 
 
 def load_configuration(config_path: str = CONFIG_PATH) -> dict:
@@ -212,19 +229,20 @@ def render_cell_health_sidebar(telemetry: dict, cfg: dict):
     voltajes = telemetry.get("cell_voltages") or []
     salud = analizar_salud_celdas(voltajes)
     source = telemetry.get("cell_voltage_source", "desconocido")
+    health_class = {
+        "success": "health-success",
+        "info": "health-info",
+        "warning": "health-warning",
+        "error": "health-error",
+    }.get(salud["tipo_alerta"], "health-info")
 
     st.markdown("---")
-    st.subheader("🏥 Salud del Banco LiFePO4")
+    st.markdown("#### 🏥 Salud del Banco LiFePO4")
     st.caption(f"Fuente: {source} · {len(voltajes)} celdas · media {salud['media_v']:.3f} V")
-
-    if salud["tipo_alerta"] == "success":
-        st.success(f"Estado: {salud['estado']}")
-    elif salud["tipo_alerta"] == "info":
-        st.info(f"Estado: {salud['estado']}")
-    elif salud["tipo_alerta"] == "warning":
-        st.warning(f"Estado: {salud['estado']}")
-    else:
-        st.error(f"Estado: {salud['estado']}")
+    st.markdown(
+        f'<div class="health-badge {health_class}">Estado: {salud["estado"]}</div>',
+        unsafe_allow_html=True,
+    )
 
     col1, col2 = st.columns(2)
     with col1:
@@ -584,79 +602,273 @@ def build_soc_segment_bar(soc: float, total_segments: int = SOC_BAR_SEGMENTS) ->
     return f'<div class="soc-segments">{"".join(parts)}</div>'
 
 
+def soc_glow_color(soc: float) -> str:
+    if soc <= 15:
+        return COLOR_RED
+    if soc <= 35:
+        return COLOR_ORANGE
+    if soc <= 60:
+        return COLOR_YELLOW
+    return COLOR_GREEN
+
+
 def inject_corporate_theme():
     st.markdown(
         f"""
         <style>
-            .stApp {{ background-color: {COLOR_BG}; color: {COLOR_TEXT}; font-family: Helvetica, Arial, sans-serif; }}
-            [data-testid="stHeader"], [data-testid="stToolbar"] {{ background: rgba(10, 22, 40, 0.95); }}
-            [data-testid="stSidebar"] {{ background-color: {COLOR_SURFACE}; }}
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap');
+
+            .stApp {{
+                background: {COLOR_BG_GRADIENT};
+                color: {COLOR_TEXT};
+                font-family: 'Inter', Helvetica, Arial, sans-serif;
+            }}
+            [data-testid="stHeader"], [data-testid="stToolbar"] {{
+                background: rgba(6, 13, 24, 0.92);
+            }}
+            [data-testid="stSidebar"] {{
+                background: linear-gradient(180deg, #0c1830 0%, #0a1428 100%);
+                border-right: 1px solid rgba(0, 245, 212, 0.15);
+            }}
             [data-testid="stSidebar"] * {{ color: {COLOR_TEXT} !important; }}
-            .block-container {{ padding-top: 1.5rem; max-width: 960px; }}
-            .brand-tag {{ color: {COLOR_ACCENT}; font-size: 0.85rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }}
-            .brand-title {{ color: {COLOR_TEXT}; font-size: 2.2rem; font-weight: 700; margin: 0 0 0.4rem 0; }}
-            .brand-subtitle {{ color: {COLOR_TEXT_MUTED}; font-size: 0.95rem; margin-bottom: 1rem; }}
-            .soc-card {{ background: {COLOR_SURFACE}; border: 1px solid {COLOR_BORDER}; border-radius: 14px; padding: 1.2rem 1.5rem; margin-bottom: 1rem; }}
-            .soc-label {{ color: {COLOR_ACCENT}; font-size: 0.8rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }}
-            .soc-value {{ color: {COLOR_TEXT}; font-size: 2.4rem; font-weight: 700; margin: 0.3rem 0 0.6rem 0; }}
+            [data-testid="stSidebar"] .stMetric {{
+                background: rgba(0, 245, 212, 0.06);
+                border: 1px solid rgba(0, 245, 212, 0.2);
+                border-radius: 10px;
+                padding: 0.5rem;
+            }}
+            .block-container {{ padding-top: 1.2rem; max-width: 1100px; }}
+
+            .brand-tag {{
+                display: inline-block;
+                color: {COLOR_ACCENT};
+                font-size: 0.8rem;
+                font-weight: 800;
+                letter-spacing: 0.14em;
+                text-transform: uppercase;
+                padding: 0.25rem 0.65rem;
+                border-radius: 999px;
+                border: 1px solid rgba(0, 245, 212, 0.45);
+                background: rgba(0, 245, 212, 0.08);
+                box-shadow: 0 0 18px rgba(0, 245, 212, 0.15);
+            }}
+            .brand-title {{
+                background: linear-gradient(90deg, {COLOR_TEXT} 0%, {COLOR_ACCENT} 55%, {COLOR_ACCENT_2} 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                font-size: 2.45rem;
+                font-weight: 800;
+                margin: 0.6rem 0 0.35rem 0;
+                letter-spacing: -0.02em;
+            }}
+            .brand-subtitle {{ color: {COLOR_TEXT_MUTED}; font-size: 0.98rem; margin-bottom: 1.1rem; }}
+
+            .soc-card {{
+                background: {COLOR_SURFACE_GRADIENT};
+                border: 1px solid rgba(0, 245, 212, 0.25);
+                border-radius: 18px;
+                padding: 1.3rem 1.6rem;
+                margin-bottom: 1rem;
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255,255,255,0.06);
+            }}
+            .soc-label {{
+                color: {COLOR_ACCENT};
+                font-size: 0.78rem;
+                font-weight: 800;
+                letter-spacing: 0.1em;
+                text-transform: uppercase;
+            }}
+            .soc-value {{
+                font-size: 2.65rem;
+                font-weight: 800;
+                margin: 0.35rem 0 0.65rem 0;
+                text-shadow: 0 0 24px currentColor;
+            }}
             .soc-segments {{
                 display: flex;
-                gap: 5px;
+                gap: 4px;
                 width: 100%;
-                height: 36px;
-                margin: 0.6rem 0 0.35rem 0;
+                height: 38px;
+                margin: 0.65rem 0 0.35rem 0;
             }}
             .soc-seg {{
                 flex: 1;
-                border-radius: 5px;
-                min-height: 36px;
-                transition: background 0.3s ease;
+                border-radius: 6px;
+                min-height: 38px;
+                transition: all 0.35s ease;
             }}
             .soc-seg-on {{
                 background: linear-gradient(180deg, {COLOR_SOC_ON_GLOW} 0%, {COLOR_SOC_ON} 100%);
-                box-shadow: 0 0 8px rgba(255, 140, 0, 0.45);
+                box-shadow: 0 0 10px rgba(255, 159, 28, 0.55), 0 2px 4px rgba(0,0,0,0.3);
             }}
             .soc-seg-off {{
                 background: {COLOR_SOC_OFF};
-                border: 1px solid {COLOR_BORDER};
-                opacity: 0.85;
+                border: 1px solid rgba(42, 90, 154, 0.5);
             }}
             .soc-scale {{
                 display: flex;
                 justify-content: space-between;
                 color: {COLOR_TEXT_MUTED};
                 font-size: 0.75rem;
-                margin-top: 0.15rem;
             }}
             .autonomy-line {{
                 color: {COLOR_ACCENT};
                 font-size: 1.05rem;
-                font-weight: 600;
-                margin-top: 0.75rem;
+                font-weight: 700;
+                margin-top: 0.85rem;
+                padding-top: 0.65rem;
+                border-top: 1px dashed rgba(0, 245, 212, 0.25);
             }}
+
             .flow-strip {{
                 display: flex;
                 justify-content: space-between;
-                gap: 0.5rem;
-                background: {COLOR_SURFACE};
-                border: 1px solid {COLOR_BORDER};
-                border-radius: 12px;
-                padding: 0.9rem 1.2rem;
+                gap: 0.65rem;
                 margin-bottom: 1rem;
-                font-size: 0.88rem;
-                color: {COLOR_TEXT_MUTED};
             }}
-            .flow-item {{ text-align: center; flex: 1; }}
-            .flow-item strong {{ color: {COLOR_TEXT}; display: block; font-size: 1rem; margin-top: 0.2rem; }}
-            .metric-card {{ background: {COLOR_SURFACE}; border: 1px solid {COLOR_BORDER}; border-radius: 14px; padding: 1.4rem 1.6rem; min-height: 170px; }}
-            .metric-label {{ color: {COLOR_ACCENT}; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 0.8rem; }}
-            .metric-value {{ color: {COLOR_TEXT}; font-size: 2.6rem; font-weight: 700; line-height: 1; margin-bottom: 0.5rem; }}
-            .metric-detail {{ color: {COLOR_TEXT_MUTED}; font-size: 0.92rem; }}
-            .status-panel {{ border-radius: 16px; padding: 2rem 1.5rem; text-align: center; margin-top: 0.5rem; }}
-            .status-title {{ font-size: 2rem; font-weight: 700; margin: 0; }}
-            .status-subtitle {{ font-size: 0.95rem; margin-top: 0.6rem; opacity: 0.92; }}
-            .footer-bar {{ background: {COLOR_SURFACE}; border: 1px solid {COLOR_BORDER}; border-radius: 10px; padding: 0.75rem 1rem; color: {COLOR_TEXT_MUTED}; font-size: 0.82rem; margin-top: 1rem; }}
-            .alert-bar {{ background: #4a1212; border: 1px solid {COLOR_RED}; border-radius: 10px; padding: 0.6rem 1rem; color: {COLOR_TEXT}; font-size: 0.85rem; margin-bottom: 0.8rem; }}
+            .flow-item {{
+                flex: 1;
+                text-align: center;
+                border-radius: 14px;
+                padding: 0.85rem 0.6rem;
+                font-size: 0.82rem;
+                color: {COLOR_TEXT_MUTED};
+                border: 1px solid transparent;
+                box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+            }}
+            .flow-item strong {{
+                display: block;
+                font-size: 1.15rem;
+                font-weight: 800;
+                margin-top: 0.25rem;
+                color: {COLOR_TEXT};
+            }}
+            .flow-solar {{
+                background: linear-gradient(160deg, rgba(255, 217, 61, 0.18) 0%, rgba(255, 159, 28, 0.08) 100%);
+                border-color: rgba(255, 217, 61, 0.35);
+            }}
+            .flow-load {{
+                background: linear-gradient(160deg, rgba(79, 195, 247, 0.18) 0%, rgba(41, 121, 255, 0.08) 100%);
+                border-color: rgba(79, 195, 247, 0.35);
+            }}
+            .flow-battery {{
+                background: linear-gradient(160deg, rgba(0, 230, 118, 0.18) 0%, rgba(0, 200, 83, 0.08) 100%);
+                border-color: rgba(0, 230, 118, 0.35);
+            }}
+            .flow-grid {{
+                background: linear-gradient(160deg, rgba(179, 136, 255, 0.18) 0%, rgba(123, 97, 255, 0.08) 100%);
+                border-color: rgba(179, 136, 255, 0.35);
+            }}
+
+            .metric-card {{
+                background: {COLOR_SURFACE_GRADIENT};
+                border: 1px solid rgba(42, 90, 154, 0.45);
+                border-radius: 16px;
+                padding: 1.35rem 1.5rem;
+                min-height: 168px;
+                box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+                border-top: 3px solid var(--accent, {COLOR_ACCENT});
+                transition: transform 0.2s ease, box-shadow 0.2s ease;
+            }}
+            .metric-card:hover {{
+                transform: translateY(-2px);
+                box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);
+            }}
+            .metric-label {{
+                color: var(--accent, {COLOR_ACCENT});
+                font-size: 0.72rem;
+                font-weight: 800;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+                margin-bottom: 0.75rem;
+            }}
+            .metric-value {{
+                color: {COLOR_TEXT};
+                font-size: 2.55rem;
+                font-weight: 800;
+                line-height: 1;
+                margin-bottom: 0.55rem;
+                text-shadow: 0 0 20px rgba(255,255,255,0.08);
+            }}
+            .metric-detail {{ color: {COLOR_TEXT_MUTED}; font-size: 0.88rem; line-height: 1.35; }}
+
+            .status-panel {{
+                border-radius: 18px;
+                padding: 2rem 1.5rem;
+                text-align: center;
+                margin-top: 0.6rem;
+                box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+            }}
+            .status-stable {{
+                background: linear-gradient(135deg, #0a3d28 0%, #0f5a3a 50%, #0a3d28 100%);
+                border: 2px solid {COLOR_GREEN};
+                box-shadow: 0 0 30px rgba(0, 255, 136, 0.25);
+            }}
+            .status-warning {{
+                background: linear-gradient(135deg, #4a3a00 0%, #6b5200 50%, #4a3a00 100%);
+                border: 2px solid {COLOR_YELLOW};
+                box-shadow: 0 0 30px rgba(255, 217, 61, 0.25);
+            }}
+            .status-critical {{
+                background: linear-gradient(135deg, #4a0f14 0%, #7a1820 50%, #4a0f14 100%);
+                border: 2px solid {COLOR_RED};
+                box-shadow: 0 0 30px rgba(255, 71, 87, 0.3);
+                animation: pulse-critical 2s ease-in-out infinite;
+            }}
+            @keyframes pulse-critical {{
+                0%, 100% {{ box-shadow: 0 0 20px rgba(255, 71, 87, 0.25); }}
+                50% {{ box-shadow: 0 0 40px rgba(255, 71, 87, 0.45); }}
+            }}
+            .status-title {{ font-size: 2rem; font-weight: 800; margin: 0; color: {COLOR_TEXT}; }}
+            .status-subtitle {{ font-size: 0.95rem; margin-top: 0.55rem; opacity: 0.92; color: {COLOR_TEXT}; }}
+
+            .health-badge {{
+                border-radius: 12px;
+                padding: 0.75rem 1rem;
+                font-weight: 700;
+                margin-bottom: 0.75rem;
+                border: 1px solid transparent;
+            }}
+            .health-success {{
+                background: linear-gradient(135deg, rgba(0,255,136,0.15), rgba(0,200,83,0.08));
+                border-color: rgba(0,255,136,0.4);
+                color: #b8ffda;
+            }}
+            .health-info {{
+                background: linear-gradient(135deg, rgba(255,217,61,0.15), rgba(255,159,28,0.08));
+                border-color: rgba(255,217,61,0.4);
+                color: #ffeaa7;
+            }}
+            .health-warning {{
+                background: linear-gradient(135deg, rgba(255,159,28,0.18), rgba(255,107,0,0.08));
+                border-color: rgba(255,159,28,0.45);
+                color: #ffd8a8;
+            }}
+            .health-error {{
+                background: linear-gradient(135deg, rgba(255,71,87,0.2), rgba(200,30,50,0.1));
+                border-color: rgba(255,71,87,0.5);
+                color: #ffb3bc;
+            }}
+
+            .footer-bar {{
+                background: rgba(15, 30, 53, 0.85);
+                border: 1px solid rgba(0, 245, 212, 0.15);
+                border-radius: 12px;
+                padding: 0.8rem 1rem;
+                color: {COLOR_TEXT_MUTED};
+                font-size: 0.82rem;
+                margin-top: 1rem;
+            }}
+            .alert-bar {{
+                background: linear-gradient(90deg, rgba(255,71,87,0.2), rgba(255,159,28,0.12));
+                border: 1px solid {COLOR_RED};
+                border-radius: 12px;
+                padding: 0.7rem 1rem;
+                color: {COLOR_TEXT};
+                font-size: 0.88rem;
+                margin-bottom: 0.9rem;
+                box-shadow: 0 0 20px rgba(255, 71, 87, 0.15);
+            }}
             #MainMenu, footer, header {{ visibility: hidden; }}
         </style>
         """,
@@ -667,11 +879,12 @@ def inject_corporate_theme():
 def render_soc_card(soc: float, autonomy_hours: float | None, capacity_kwh: float):
     segment_bar = build_soc_segment_bar(soc)
     autonomy_text = format_autonomy(autonomy_hours)
+    soc_color = soc_glow_color(soc)
     st.markdown(
         f"""
         <div class="soc-card">
             <div class="soc-label">Estado de Carga</div>
-            <div class="soc-value">⚡ SoC: {soc:.1f}%</div>
+            <div class="soc-value" style="color:{soc_color};">⚡ SoC: {soc:.1f}%</div>
             {segment_bar}
             <div class="soc-scale"><span>0%</span><span>100%</span></div>
             <div class="autonomy-line">⏱ Autonomía estimada: {autonomy_text} · Banco {capacity_kwh:.1f} kWh</div>
@@ -689,20 +902,20 @@ def render_energy_flow_strip(telemetry: dict):
     st.markdown(
         f"""
         <div class="flow-strip">
-            <div class="flow-item">☀️ Solar<strong>{format_power_watts(pv)}</strong></div>
-            <div class="flow-item">🏠 Consumo<strong>{format_power_watts(load)}</strong></div>
-            <div class="flow-item">🔋 Batería<strong>{format_power_watts(bat)}</strong></div>
-            <div class="flow-item">🔌 Red<strong>{format_power_watts(grid)}</strong></div>
+            <div class="flow-item flow-solar">☀️ Solar<strong style="color:{COLOR_SOLAR};">{format_power_watts(pv)}</strong></div>
+            <div class="flow-item flow-load">🏠 Consumo<strong style="color:{COLOR_LOAD};">{format_power_watts(load)}</strong></div>
+            <div class="flow-item flow-battery">🔋 Batería<strong style="color:{COLOR_BATTERY};">{format_power_watts(bat)}</strong></div>
+            <div class="flow-item flow-grid">🔌 Red<strong style="color:{COLOR_GRID};">{format_power_watts(grid)}</strong></div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
 
-def render_metric_card(label: str, value: str, detail: str):
+def render_metric_card(label: str, value: str, detail: str, accent: str = COLOR_ACCENT):
     st.markdown(
         f"""
-        <div class="metric-card">
+        <div class="metric-card" style="--accent: {accent};">
             <div class="metric-label">{label}</div>
             <div class="metric-value">{value}</div>
             <div class="metric-detail">{detail}</div>
@@ -714,17 +927,17 @@ def render_metric_card(label: str, value: str, detail: str):
 
 def render_status_panel(level: str, message: str):
     if level == "STABLE":
-        bg, border, subtitle = COLOR_GREEN_DARK, COLOR_GREEN, "Sin alertas activas en la planta"
+        css_class, subtitle = "status-stable", "Sin alertas activas en la planta"
     elif level == "WARNING":
-        bg, border, subtitle = "#4a3f00", COLOR_YELLOW, "Acción preventiva recomendada"
+        css_class, subtitle = "status-warning", "Acción preventiva recomendada"
     else:
-        bg, border, subtitle = "#4a1212", COLOR_RED, "Contramedida Modbus activada o requerida"
+        css_class, subtitle = "status-critical", "Contramedida Modbus activada o requerida"
 
     st.markdown(
         f"""
-        <div class="status-panel" style="background:{bg}; border:2px solid {border};">
-            <p class="status-title" style="color:{COLOR_TEXT};">{message}</p>
-            <p class="status-subtitle" style="color:{COLOR_TEXT};">{subtitle}</p>
+        <div class="status-panel {css_class}">
+            <p class="status-title">{message}</p>
+            <p class="status-subtitle">{subtitle}</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -767,28 +980,49 @@ def render_dashboard(cfg: dict, mode: str, telemetry: dict):
 
     col1, col2, col3 = st.columns(3, gap="medium")
     with col1:
-        cell_note = modbus_note
         render_metric_card(
             "Voltaje de Celdas",
             f"{v_max:.2f} V",
-            f"Mínima: {v_min:.2f} V · Δ celda: {(v_max - v_min) * 1000:.0f} mV · {cell_note}",
+            f"Mínima: {v_min:.2f} V · Δ celda: {(v_max - v_min) * 1000:.0f} mV · {modbus_note}",
+            accent=METRIC_ACCENTS["cells"],
         )
     with col2:
         render_metric_card(
             "Temperatura del Pack",
             f"{t_max:.1f} °C",
             f"Mínima: {t_min:.1f} °C · Rango: {t_max - t_min:.1f} °C",
+            accent=METRIC_ACCENTS["temperature"],
         )
     with col3:
-        render_metric_card("Consumo de la Casa", power_value, f"{power_detail} · reg 817")
+        render_metric_card(
+            "Consumo de la Casa",
+            power_value,
+            f"{power_detail} · reg 817",
+            accent=METRIC_ACCENTS["consumption"],
+        )
 
     col4, col5, col6 = st.columns(3, gap="medium")
     with col4:
-        render_metric_card("Producción Solar", pv_value, f"Potencia PV instantánea · reg 850 · {modbus_note}")
+        render_metric_card(
+            "Producción Solar",
+            pv_value,
+            f"Potencia PV instantánea · reg 850 · {modbus_note}",
+            accent=METRIC_ACCENTS["solar"],
+        )
     with col5:
-        render_metric_card("Potencia Batería", bat_value, f"{bat_detail} · reg 842 · {modbus_note}")
+        render_metric_card(
+            "Potencia Batería",
+            bat_value,
+            f"{bat_detail} · reg 842 · {modbus_note}",
+            accent=METRIC_ACCENTS["battery"],
+        )
     with col6:
-        render_metric_card("Potencia de Red", grid_value, f"{grid_detail} · reg 820 · {modbus_note}")
+        render_metric_card(
+            "Potencia de Red",
+            grid_value,
+            f"{grid_detail} · reg 820 · {modbus_note}",
+            accent=METRIC_ACCENTS["grid"],
+        )
 
     render_status_panel(level, message)
 
@@ -820,7 +1054,11 @@ def main():
     default_index = 0 if cfg.get("default_mode", "simulated") == "simulated" else 1
 
     with st.sidebar:
-        st.markdown("### ⚙ Panel de Control")
+        st.markdown(
+            '<p style="font-size:0.72rem;font-weight:800;letter-spacing:0.12em;'
+            f'color:{COLOR_ACCENT};text-transform:uppercase;margin-bottom:0.2rem;">Panel de Control</p>',
+            unsafe_allow_html=True,
+        )
         mode = st.selectbox(
             "Modo operativo",
             [MODE_SIM, MODE_REAL],
@@ -833,7 +1071,11 @@ def main():
         st.markdown(f"**Intervalo:** `{cfg['sample_interval_s']} s`")
         st.markdown(f"**Batería:** `{cfg.get('battery_capacity_kwh', 10)} kWh`")
         wa = "✅ Activas" if cfg.get("whatsapp_alerts_enabled") else "❌ Off"
-        st.markdown(f"**WhatsApp:** {wa}")
+        wa_color = "#00ff88" if cfg.get("whatsapp_alerts_enabled") else "#ff6b6b"
+        st.markdown(
+            f'**WhatsApp:** <span style="color:{wa_color};font-weight:700;">{wa}</span>',
+            unsafe_allow_html=True,
+        )
 
     cell_health_panel = st.sidebar.empty()
     dashboard = st.empty()

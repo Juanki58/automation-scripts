@@ -14,6 +14,10 @@ from pathlib import Path
 import streamlit as st
 from pyModbusTCP.client import ModbusClient
 
+_API_DIR = Path(__file__).resolve().parent.parent / "api-integrations"
+if str(_API_DIR) not in sys.path:
+    sys.path.insert(0, str(_API_DIR))
+
 from whatsapp_alerts import send_whatsapp_alert
 
 logging.basicConfig(
@@ -23,7 +27,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-CONFIG_PATH = "config.json"
+CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
 MODE_SIM = "Modo Laboratorio (Simulado)"
 MODE_REAL = "Modo Planta Real (Victron Modbus)"
 
@@ -60,7 +64,7 @@ METRIC_ACCENTS = {
 }
 
 
-def load_configuration(config_path: str = CONFIG_PATH) -> dict:
+def load_configuration(config_path: Path = CONFIG_PATH) -> dict:
     defaults = {
         "victron_ip": "192.168.1.100",
         "modbus_port": 502,

@@ -1,8 +1,13 @@
-
 import datetime
 import os
 import shutil
+import sys
 import tarfile
+from pathlib import Path
+
+_API_DIR = Path(__file__).resolve().parent
+if str(_API_DIR) not in sys.path:
+    sys.path.insert(0, str(_API_DIR))
 
 from whatsapp_alerts import send_whatsapp_alert
 

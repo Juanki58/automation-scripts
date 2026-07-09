@@ -9,6 +9,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_IMAGE = SCRIPT_DIR / "image_8ff221.png"
+DEFAULT_STL = SCRIPT_DIR / "escudo_vendrell_3d.stl"
+
 
 def image_to_stl(image_path: str, output_stl_path: str, pixel_size_mm: float = 0.4) -> bool:
     print("Cargando y analizando imagen...")
@@ -92,13 +96,13 @@ def main():
     parser.add_argument(
         "image",
         nargs="?",
-        default="image_8ff221.png",
+        default=str(DEFAULT_IMAGE),
         help="Ruta de la imagen de entrada (PNG/JPG)",
     )
     parser.add_argument(
         "-o",
         "--output",
-        default="escudo_vendrell_3d.stl",
+        default=str(DEFAULT_STL),
         help="Ruta del archivo STL de salida",
     )
     parser.add_argument(

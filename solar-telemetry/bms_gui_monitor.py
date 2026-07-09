@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 SAMPLE_INTERVAL_MS = 5000
-CONFIG_PATH = "config.json"
+CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
 
 # Paleta corporativa B-Intelligent
 COLOR_BG = "#0a1628"
@@ -25,7 +25,7 @@ COLOR_RED = "#ff5252"
 COLOR_GREEN_DARK = "#0d4d2a"
 
 
-def load_configuration(config_path: str = CONFIG_PATH) -> dict:
+def load_configuration(config_path: Path = CONFIG_PATH) -> dict:
     defaults = {
         "victron_ip": "192.168.1.100",
         "modbus_port": 502,

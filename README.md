@@ -2,52 +2,97 @@
 
 Welcome to my public repository. This space is dedicated to showcasing clean, production-ready automation scripts, data pipelines, and system configurations designed to optimize business workflows and system efficiency.
 
+## 📂 Repository Structure
+
+```
+automation-scripts/
+├── solar-telemetry/        # Victron GX, BMS LiFePO4, monitorización industrial
+├── api-integrations/       # WhatsApp Cloud API y alertas modulares
+├── market-analysis/        # Seguimiento financiero y métricas de mercado
+├── automation-utilities/   # Herramientas mecánicas (imagen → STL 3D)
+├── requirements.txt
+└── README.md
+```
+
 ## 📊 Repository Contents
 
-### 1. Market Data Automation (`data_processor.py`)
-A Python-based automation script designed to clean and process raw financial or operational data feeds.
-*   **Key Features:** Automated data cleaning (handling type errors and anomalies), calculation of core metrics (Moving averages, price volatility, peaks, and drops), and simulated real-time API feed processing.
-*   **Use Case:** Ideal for businesses looking to automate daily market reporting, portfolio risk analysis, or data pipeline optimization without manual oversight.
+### 1. Solar Telemetry (`solar-telemetry/`)
 
-### 2. System Health & Backup Monitor (`system_monitor_backup.py`)
-Proactive infrastructure monitoring script with automated backup and alerting capabilities.
-*   **Key Features:** Disk usage health checks, compressed tarball backups, and WhatsApp Cloud API alerts when disk usage exceeds 90%.
-*   **Use Case:** Headless server maintenance, DevOps monitoring routines, and automated log archival.
+Industrial monitoring, Victron inverter control, and LiFePO4 battery management.
 
-### 3. Victron Industrial BMS Safety Supervisor (`victron_industrial_bms_safety.py`)
-Closed-loop safety supervisor for photovoltaic plants that protects the battery bank by acting on Victron Energy equipment in real time.
-*   **Architecture:** Reads cell-level telemetry from a **JK BMS** (via Modbus RTU, MQTT, or corporate API gateway) and writes active countermeasures to a **Color Control GX / Cerbo GX** over **Modbus TCP** (port 502).
-*   **Key Features:**
-    *   Continuous 5-second sampling loop with industrial-grade logging.
-    *   Configurable safety thresholds via `config.json` (cell voltage, temperature limits).
-    *   Active mitigation: charge/discharge current limits and emergency inverter shutdown through Victron holding registers (2704, 2705, 2706).
-    *   Thermal protection (emergency shutdown above 55 °C, zero charge current below 0 °C).
-    *   Individual cell protection against overvoltage, warning-level charge reduction, and deep-discharge prevention.
-*   **Use Case:** Industrial PV + storage installations where the JK BMS is the source of truth for cell health and the Victron GX gateway must enforce safety limits on inverters and chargers without human intervention.
-
-## 🛠️ Tech Stack & Skills Demonstrated
-*   **Languages:** Python (Core logic, math operations, and data structures).
-*   **Methodologies:** Data engineering pipelines, robust exception/error handling, closed-loop control, and algorithmic efficiency.
-*   **Systems & Automation:** Modbus TCP industrial fieldbus, Victron Venus OS / Cerbo GX integration, BMS telemetry gateways, API data integrations, and headless server environments (Linux, Docker, Home Assistant ecosystems).
-
-## 🚀 How to Run the Scripts
-Clone the repository and install dependencies:
-```bash
-pip install -r requirements.txt
-```
-
-**Market data automation:**
-```bash
-python data_processor.py
-```
-
-**System health monitor:**
-```bash
-python system_monitor_backup.py
-```
+| Script | Description |
+|--------|-------------|
+| `victron_industrial_bms_safety.py` | Closed-loop safety supervisor: JK BMS telemetry → Victron GX countermeasures over Modbus TCP |
+| `bms_web_monitor.py` | Real-time Streamlit dashboard (Modbus live + simulation) |
+| `bms_gui_monitor.py` | Desktop tkinter panel for BMS health monitoring |
+| `config.example.json` | Template for plant IP, thresholds, and alert settings |
 
 **Victron BMS safety supervisor:**
 ```bash
-# Edit config.json with your Cerbo GX IP and safety thresholds
-python victron_industrial_bms_safety.py
+# Copy config.example.json → config.json and edit your Cerbo GX IP
+python solar-telemetry/victron_industrial_bms_safety.py
+```
+
+**BMS web monitor (Streamlit):**
+```bash
+streamlit run solar-telemetry/bms_web_monitor.py
+```
+
+### 2. API Integrations (`api-integrations/`)
+
+WhatsApp Cloud API integration and modular alerting.
+
+| Script | Description |
+|--------|-------------|
+| `whatsapp_alerts.py` | Sends approved WhatsApp template alerts via Meta Cloud API |
+| `system_monitor_backup.py` | Disk health checks, tarball backups, WhatsApp alerts above 90% usage |
+
+**System health monitor:**
+```bash
+python api-integrations/system_monitor_backup.py
+```
+
+### 3. Market Analysis (`market-analysis/`)
+
+Financial tracking tools and market data automation.
+
+| Script | Description |
+|--------|-------------|
+| `data_processor.py` | Cleans raw price feeds and calculates volatility, averages, peaks, and drops |
+
+**Market data automation:**
+```bash
+python market-analysis/data_processor.py
+```
+
+### 4. Automation Utilities (`automation-utilities/`)
+
+Mechanical / manufacturing helpers.
+
+| Script | Description |
+|--------|-------------|
+| `convert_to_3d.py` | Downloads shield PNG (if missing) and converts to relief STL |
+| `image_to_stl.py` | Color-segmented image → 3D STL converter (OpenCV) |
+| `image_8ff221.png` | Input image for the El Vendrell shield (place in this folder) |
+
+**Image to STL:**
+```bash
+cd automation-utilities
+python convert_to_3d.py
+# or
+python image_to_stl.py image_8ff221.png -o escudo_vendrell_3d.stl --pixel-size 0.3
+```
+
+## 🛠️ Tech Stack & Skills Demonstrated
+
+*   **Languages:** Python (core logic, math operations, and data structures).
+*   **Methodologies:** Data engineering pipelines, robust exception/error handling, closed-loop control, and algorithmic efficiency.
+*   **Systems & Automation:** Modbus TCP industrial fieldbus, Victron Venus OS / Cerbo GX integration, BMS telemetry gateways, API data integrations, and headless server environments (Linux, Docker, Home Assistant ecosystems).
+
+## 🚀 Setup
+
+Clone the repository and install dependencies:
+
+```bash
+pip install -r requirements.txt
 ```

@@ -1,6 +1,8 @@
 import time
 import json
 import logging
+from pathlib import Path
+
 from pyModbusTCP.client import ModbusClient
 
 # Configuración de logs con formato industrial
@@ -8,8 +10,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - 
 
 
 class VictronBmsSafetySupervisor:
-    def __init__(self, config_path="config.json"):
-        self.config_path = config_path
+    def __init__(self, config_path=None):
+        self.config_path = config_path or (Path(__file__).resolve().parent / "config.json")
         self.config = self.load_configuration()
 
         # Inicialización de clientes Modbus para la red industrial

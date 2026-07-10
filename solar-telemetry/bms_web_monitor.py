@@ -20,6 +20,8 @@ if str(_API_DIR) not in sys.path:
 
 from whatsapp_alerts import send_whatsapp_alert
 
+from jk_bms_client import fetch_all_batteries, merge_battery_telemetry
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - [MODBUS] - %(message)s",
@@ -105,17 +107,43 @@ def load_configuration(config_path: Path = CONFIG_PATH) -> dict:
         "battery_unit_id": None,
         "modbus_reg_battery_temperature": 282,
         "modbus_reg_battery_temperature_scale": 10,
+        "batteries": [],
     }
     path = Path(config_path)
     if not path.exists():
         return defaults
-    with open(path, encoding="utf-8") as f:
+    with open(path, encoding="utf-8-sig") as f:
         loaded = json.load(f)
     merged = {**defaults, **loaded}
     if "whatsapp_alerts_enabled" not in loaded and loaded.get("telegram_alerts_enabled") is not None:
         merged["whatsapp_alerts_enabled"] = loaded["telegram_alerts_enabled"]
     if "whatsapp_alert_cooldown_s" not in loaded and loaded.get("telegram_alert_cooldown_s") is not None:
         merged["whatsapp_alert_cooldown_s"] = loaded["telegram_alert_cooldown_s"]
+
+    if merged.get("victron_host"):
+        merged["victron_ip"] = merged["victron_host"]
+
+    jk_hosts = [merged.get(f"jk_host_{i}") for i in range(1, 9) if merged.get(f"jk_host_{i}")]
+    if jk_hosts and not merged.get("batteries"):
+        merged["batteries"] = [
+            {
+                "name": f"Batería {i}",
+                "jk_host": host,
+                "jk_port": merged.get("jk_port", 6481),
+            }
+            for i, host in enumerate(jk_hosts, start=1)
+        ]
+
+    for idx, battery in enumerate(merged.get("batteries", [])):
+        battery.setdefault("id", f"bateria_{idx + 1}")
+        battery.setdefault("enabled", True)
+        battery.setdefault("cell_count", merged.get("cell_count", 16))
+        battery.setdefault("jk_unit_id", 1)
+        battery.setdefault("jk_port", merged.get("jk_port", 6481))
+        flat_host = merged.get(f"jk_host_{idx + 1}")
+        if flat_host:
+            battery["jk_host"] = flat_host
+
     return merged
 
 
@@ -229,38 +257,196 @@ def build_estimated_cell_voltages(v_min: float, v_max: float, cell_count: int) -
     return [round(v_min + i * step, 3) for i in range(cell_count)]
 
 
-def render_cell_health_sidebar(telemetry: dict, cfg: dict):
-    voltajes = telemetry.get("cell_voltages") or []
-    salud = analizar_salud_celdas(voltajes)
-    source = telemetry.get("cell_voltage_source", "desconocido")
-    health_class = {
-        "success": "health-success",
-        "info": "health-info",
-        "warning": "health-warning",
-        "error": "health-error",
-    }.get(salud["tipo_alerta"], "health-info")
+def _cell_status_class(voltage: float, cfg: dict, is_max: bool, is_min: bool) -> str:
+    if voltage >= cfg["v_cell_critical_high"] or voltage <= cfg["v_cell_critical_low"]:
+        return "cell-critical"
+    if voltage >= cfg["v_cell_warning_high"]:
+        return "cell-warning"
+    if is_max:
+        return "cell-max"
+    if is_min:
+        return "cell-min"
+    return "cell-normal"
 
-    st.markdown("---")
-    st.markdown("#### 🏥 Salud del Banco LiFePO4")
-    st.caption(f"Fuente: {source} · {len(voltajes)} celdas · media {salud['media_v']:.3f} V")
-    st.markdown(
-        f'<div class="health-badge {health_class}">Estado: {salud["estado"]}</div>',
-        unsafe_allow_html=True,
+
+def _cell_card_html(cell_index: int, voltage: float, is_max: bool, is_min: bool, cfg: dict) -> str:
+    status = _cell_status_class(voltage, cfg, is_max, is_min)
+    tag = "MAX" if is_max else ("MIN" if is_min else "")
+    tag_html = f'<span class="cell-tag">{tag}</span>' if tag else ""
+    return (
+        f'<div class="cell-card {status}">'
+        f'<div class="cell-id">C{cell_index:02d}{tag_html}</div>'
+        f'<div class="cell-voltage">{voltage:.3f} V</div>'
+        f"</div>"
     )
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric(
-            label="Desviación Est.",
-            value=f"{salud['desviacion_estandar_mv']} mV",
-            help="Dispersión media entre celdas. Lo ideal es mantenerla por debajo de 15 mV en operación.",
+
+def render_battery_cells_panel(batteries: list[dict], cfg: dict):
+    """Grid 4×4 de botones con el voltaje de cada celda JK BMS v19."""
+    if not batteries:
+        return
+
+    if "selected_cell" not in st.session_state:
+        st.session_state.selected_cell = None
+
+    st.markdown("### 🔬 Celdas JK BMS v19 — por batería")
+    st.caption("Pulsa «Ver detalles» en una celda para ampliar. ▲ máxima · ▼ mínima del banco.")
+
+    for b_idx, battery in enumerate(batteries):
+        voltajes = battery.get("cells") or battery.get("cell_voltages") or []
+        bank_id = battery.get("id", f"bank_{b_idx}")
+        bank_key = str(bank_id).replace(" ", "_").replace(".", "_")
+        bank_name = battery.get("name", bank_id)
+        online = battery.get("jk_online", False)
+        source = battery.get("cell_voltage_source", "desconocido")
+        status = "🟢 Online" if online and not battery.get("error") else "🔴 Offline / estimado"
+
+        st.markdown(f"#### {status} · {bank_name}")
+        st.caption(source)
+        if battery.get("error"):
+            st.warning(f"JK BMS: {battery['error']}")
+
+        if not voltajes:
+            st.info("Sin datos de celdas para este banco.")
+            continue
+
+        v_max = max(voltajes)
+        v_min = min(voltajes)
+        media = sum(voltajes) / len(voltajes)
+
+        for row in range(4):
+            cols = st.columns(4)
+            for col in range(4):
+                cell_idx = row * 4 + col
+                if cell_idx >= len(voltajes):
+                    continue
+                voltage = voltajes[cell_idx]
+                is_max = voltage == v_max
+                is_min = voltage == v_min
+                with cols[col]:
+                    st.markdown(_cell_card_html(cell_idx + 1, voltage, is_max, is_min, cfg), unsafe_allow_html=True)
+                    if st.button(
+                        "Ver detalles",
+                        key=f"jk_detail_{bank_key}_{cell_idx}",
+                        use_container_width=True,
+                    ):
+                        st.session_state.selected_cell = {
+                            "battery_id": bank_id,
+                            "battery_name": bank_name,
+                            "cell_index": cell_idx + 1,
+                            "voltage": voltage,
+                            "is_highest": is_max,
+                            "is_lowest": is_min,
+                            "delta_from_avg_mv": round((voltage - media) * 1000, 1),
+                            "source": source,
+                            "max_cell_index": battery.get("max_cell_index"),
+                            "min_cell_index": battery.get("min_cell_index"),
+                        }
+
+        salud = analizar_salud_celdas(voltajes)
+        st.markdown(
+            f'<div class="cell-bank-summary">'
+            f'Drift <strong>{salud["drift_mv"]} mV</strong> · '
+            f'σ <strong>{salud["desviacion_estandar_mv"]} mV</strong> · '
+            f'{salud["estado"]}'
+            f"</div>",
+            unsafe_allow_html=True,
         )
-    with col2:
-        st.metric(
-            label="Dispersión (Drift)",
-            value=f"{salud['drift_mv']} mV",
-            help="Diferencia entre la celda con voltaje más alto y la más baja (Vmax − Vmin).",
+
+    selected = st.session_state.get("selected_cell")
+    if selected:
+        st.markdown("---")
+        st.markdown(
+            f'<div class="cell-detail-panel">'
+            f'<div class="cell-detail-title">Celda seleccionada — {selected["battery_name"]}</div>'
+            f'<div class="cell-detail-grid">'
+            f'<div><span>Celda</span><strong>C{selected["cell_index"]:02d}</strong></div>'
+            f'<div><span>Voltaje</span><strong>{selected["voltage"]:.3f} V</strong></div>'
+            f'<div><span>Δ vs media</span><strong>{selected["delta_from_avg_mv"]:+.1f} mV</strong></div>'
+            f'<div><span>Fuente</span><strong>JK v19</strong></div>'
+            f"</div></div>",
+            unsafe_allow_html=True,
         )
+
+        hints = []
+        if selected.get("is_highest"):
+            hints.append("Celda con **voltaje máximo** del banco")
+        if selected.get("is_lowest"):
+            hints.append("Celda con **voltaje mínimo** del banco")
+        if selected.get("max_cell_index") == selected["cell_index"]:
+            hints.append("Confirmado por registro JK `MaxVolCellNbr`")
+        if selected.get("min_cell_index") == selected["cell_index"]:
+            hints.append("Confirmado por registro JK `MinVolCellNbr`")
+        if selected["voltage"] >= cfg["v_cell_critical_high"]:
+            hints.append("⚠ Por encima del umbral crítico de carga")
+        elif selected["voltage"] >= cfg["v_cell_warning_high"]:
+            hints.append("⚠ Zona de advertencia de carga")
+        if selected["voltage"] <= cfg["v_cell_critical_low"]:
+            hints.append("⚠ Por debajo del umbral crítico de descarga")
+
+        if hints:
+            st.info(" · ".join(hints))
+        if st.button("Cerrar detalle", key="jk_cell_clear_selection"):
+            st.session_state.selected_cell = None
+
+
+def render_cell_health_sidebar(telemetry: dict, cfg: dict):
+    batteries = telemetry.get("batteries") or []
+    source = telemetry.get("cell_voltage_source", "desconocido")
+
+    st.markdown("---")
+    st.markdown("#### 🏥 Salud LiFePO4")
+
+    if batteries:
+        for bank in batteries:
+            voltajes = bank.get("cells") or bank.get("cell_voltages") or []
+            if not voltajes:
+                continue
+            salud = analizar_salud_celdas(voltajes)
+            health_class = {
+                "success": "health-success",
+                "info": "health-info",
+                "warning": "health-warning",
+                "error": "health-error",
+            }.get(salud["tipo_alerta"], "health-info")
+            bank_name = bank.get("name", bank.get("id", "Banco"))
+            online = "🟢" if bank.get("jk_online") and not bank.get("error") else "🔴"
+            st.caption(f"{online} {bank_name} · {len(voltajes)} celdas · media {salud['media_v']:.3f} V")
+            st.markdown(
+                f'<div class="health-badge {health_class}">{salud["estado"]}</div>',
+                unsafe_allow_html=True,
+            )
+            c1, c2 = st.columns(2)
+            c1.metric("σ", f"{salud['desviacion_estandar_mv']} mV")
+            c2.metric("Drift", f"{salud['drift_mv']} mV")
+        st.caption(f"Fuente agregada: {source}")
+    else:
+        voltajes = telemetry.get("cell_voltages") or []
+        salud = analizar_salud_celdas(voltajes)
+        health_class = {
+            "success": "health-success",
+            "info": "health-info",
+            "warning": "health-warning",
+            "error": "health-error",
+        }.get(salud["tipo_alerta"], "health-info")
+        st.caption(f"Fuente: {source} · {len(voltajes)} celdas · media {salud['media_v']:.3f} V")
+        st.markdown(
+            f'<div class="health-badge {health_class}">Estado: {salud["estado"]}</div>',
+            unsafe_allow_html=True,
+        )
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric(
+                label="Desviación Est.",
+                value=f"{salud['desviacion_estandar_mv']} mV",
+                help="Dispersión media entre celdas. Lo ideal es mantenerla por debajo de 15 mV en operación.",
+            )
+        with col2:
+            st.metric(
+                label="Dispersión (Drift)",
+                value=f"{salud['drift_mv']} mV",
+                help="Diferencia entre la celda con voltaje más alto y la más baja (Vmax − Vmin).",
+            )
 
     with st.expander("ℹ️ ¿Por qué importa la Desviación Estándar?"):
         st.write(
@@ -565,16 +751,20 @@ def read_victron_modbus_telemetry(cfg: dict) -> dict:
 
 
 def fetch_telemetry(mode: str, cfg: dict) -> dict:
+    simulated = mode != MODE_REAL
     if mode == MODE_REAL:
         try:
-            return read_victron_modbus_telemetry(cfg)
+            system = read_victron_modbus_telemetry(cfg)
         except Exception as exc:
             logger.error("Modo Real con fallback simulado: %s: %s", type(exc).__name__, exc)
-            fallback = read_simulated_telemetry(cfg)
-            fallback["source"] = "modbus_error"
-            fallback["error"] = f"{type(exc).__name__}: {exc}"
-            return fallback
-    return read_simulated_telemetry(cfg)
+            system = read_simulated_telemetry(cfg)
+            system["source"] = "modbus_error"
+            system["error"] = f"{type(exc).__name__}: {exc}"
+    else:
+        system = read_simulated_telemetry(cfg)
+
+    batteries = fetch_all_batteries(cfg, simulated=simulated, sim_t=time.time())
+    return merge_battery_telemetry(system, batteries)
 
 
 def evaluate_plant_status(telemetry: dict, cfg: dict) -> tuple[str, str, str]:
@@ -642,6 +832,126 @@ def inject_corporate_theme():
                 padding: 0.5rem;
             }}
             .block-container {{ padding-top: 1.2rem; max-width: 1100px; }}
+
+            .cell-bank-summary {{
+                color: {COLOR_TEXT_MUTED};
+                font-size: 0.88rem;
+                margin: 0.35rem 0 1.2rem 0;
+                padding: 0.55rem 0.75rem;
+                border-radius: 10px;
+                background: rgba(0, 245, 212, 0.05);
+                border: 1px solid rgba(0, 245, 212, 0.12);
+            }}
+
+            .cell-card {{
+                border-radius: 12px;
+                padding: 0.7rem 0.45rem 0.55rem;
+                margin-bottom: 0.4rem;
+                text-align: center;
+                border: 2px solid transparent;
+            }}
+            .cell-card .cell-id {{
+                font-size: 0.72rem;
+                color: #c8daf0;
+                font-weight: 800;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+            }}
+            .cell-card .cell-voltage {{
+                font-size: 1.12rem;
+                font-weight: 800;
+                color: #ffffff;
+                margin-top: 0.2rem;
+            }}
+            .cell-card .cell-tag {{
+                display: inline-block;
+                margin-left: 0.35rem;
+                padding: 0.05rem 0.35rem;
+                border-radius: 999px;
+                font-size: 0.62rem;
+                font-weight: 800;
+                background: rgba(255, 255, 255, 0.18);
+            }}
+            .cell-normal {{
+                background: linear-gradient(160deg, #0f5c52 0%, #0a3d38 100%);
+                border-color: #00c9a7;
+                box-shadow: 0 4px 14px rgba(0, 201, 167, 0.22);
+            }}
+            .cell-max {{
+                background: linear-gradient(160deg, #1565a8 0%, #0c3f6e 100%);
+                border-color: #00f5d4;
+                box-shadow: 0 0 16px rgba(0, 245, 212, 0.38);
+            }}
+            .cell-min {{
+                background: linear-gradient(160deg, #8a5a12 0%, #5c3a08 100%);
+                border-color: #ffd93d;
+                box-shadow: 0 0 14px rgba(255, 217, 61, 0.28);
+            }}
+            .cell-warning {{
+                background: linear-gradient(160deg, #9a6d08 0%, #6b4a04 100%);
+                border-color: #ffc107;
+                box-shadow: 0 0 14px rgba(255, 193, 7, 0.3);
+            }}
+            .cell-critical {{
+                background: linear-gradient(160deg, #a81830 0%, #6e0d1f 100%);
+                border-color: #ff4757;
+                box-shadow: 0 0 16px rgba(255, 71, 87, 0.35);
+            }}
+
+            .cell-detail-panel {{
+                background: linear-gradient(160deg, #123456 0%, #0c2440 100%);
+                border: 2px solid {COLOR_ACCENT};
+                border-radius: 14px;
+                padding: 1rem 1.2rem;
+                margin: 0.5rem 0 1rem 0;
+                box-shadow: 0 0 20px rgba(0, 245, 212, 0.18);
+            }}
+            .cell-detail-title {{
+                color: {COLOR_ACCENT};
+                font-size: 1rem;
+                font-weight: 800;
+                margin-bottom: 0.85rem;
+            }}
+            .cell-detail-grid {{
+                display: grid;
+                grid-template-columns: repeat(4, 1fr);
+                gap: 0.75rem;
+            }}
+            .cell-detail-grid div {{
+                background: rgba(0, 0, 0, 0.22);
+                border-radius: 10px;
+                padding: 0.65rem 0.5rem;
+                text-align: center;
+            }}
+            .cell-detail-grid span {{
+                display: block;
+                color: {COLOR_TEXT_MUTED};
+                font-size: 0.72rem;
+                margin-bottom: 0.25rem;
+            }}
+            .cell-detail-grid strong {{
+                color: #ffffff;
+                font-size: 1.05rem;
+            }}
+
+            div[data-testid="column"] .stButton > button {{
+                background: linear-gradient(180deg, #00b89a 0%, #008f78 100%) !important;
+                color: #ffffff !important;
+                border: 2px solid #00f5d4 !important;
+                border-radius: 10px;
+                font-size: 0.8rem;
+                font-weight: 800;
+                padding: 0.45rem 0.35rem;
+                min-height: 2.4rem;
+                transition: all 0.2s ease;
+                box-shadow: 0 4px 12px rgba(0, 245, 212, 0.25);
+            }}
+            div[data-testid="column"] .stButton > button:hover {{
+                background: linear-gradient(180deg, #00f5d4 0%, #00b89a 100%) !important;
+                border-color: #ffffff !important;
+                box-shadow: 0 0 18px rgba(0, 245, 212, 0.45);
+                color: #042018 !important;
+            }}
 
             .brand-tag {{
                 display: inline-block;
@@ -1029,6 +1339,7 @@ def render_dashboard(cfg: dict, mode: str, telemetry: dict):
         )
 
     render_status_panel(level, message)
+    render_battery_cells_panel(telemetry.get("batteries") or [], cfg)
 
     source_label = {
         "simulated": "telemetría simulada",
@@ -1081,17 +1392,16 @@ def main():
             unsafe_allow_html=True,
         )
 
-    cell_health_panel = st.sidebar.empty()
-    dashboard = st.empty()
     interval = cfg["sample_interval_s"]
+    telemetry = fetch_telemetry(mode, cfg)
+    render_cell_health_sidebar(telemetry, cfg)
+    render_dashboard(cfg, mode, telemetry)
 
-    while True:
-        telemetry = fetch_telemetry(mode, cfg)
-        with cell_health_panel.container():
-            render_cell_health_sidebar(telemetry, cfg)
-        with dashboard.container():
-            render_dashboard(cfg, mode, telemetry)
+    # Auto-refresh sin duplicar widget keys (st.rerun reemplaza al while True).
+    # Pausa el refresco mientras hay una celda seleccionada para no perder el detalle.
+    if st.session_state.get("selected_cell") is None:
         time.sleep(interval)
+        st.rerun()
 
 
 if __name__ == "__main__":

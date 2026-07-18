@@ -43,6 +43,10 @@ def main():
     )
     parser.add_argument("-o", "--output", default=DEFAULT_STL, help="STL de salida")
     parser.add_argument("--pixel-size", type=float, default=0.3, help="Tamano mm/pixel")
+    parser.add_argument("--mode", choices=("auto", "bw", "color"), default="auto")
+    parser.add_argument("--base-mm", type=float, default=2.0, help="Altura base B/N")
+    parser.add_argument("--relief-mm", type=float, default=3.0, help="Relieve blanco B/N")
+    parser.add_argument("--max-dim", type=int, default=500, help="Lado maximo px (0=sin limite)")
     parser.add_argument("--url", default=DEFAULT_URL, help="URL de descarga si falta la imagen local")
     parser.add_argument(
         "--skip-download",
@@ -68,7 +72,15 @@ def main():
     output_path = Path(args.output)
     if not output_path.is_absolute():
         output_path = SCRIPT_DIR / output_path
-    ok = image_to_stl(str(image_path), str(output_path), pixel_size_mm=args.pixel_size)
+    ok = image_to_stl(
+        str(image_path),
+        str(output_path),
+        pixel_size_mm=args.pixel_size,
+        mode=args.mode,
+        base_mm=args.base_mm,
+        relief_mm=args.relief_mm,
+        max_dim=args.max_dim,
+    )
     raise SystemExit(0 if ok else 1)
 
 

@@ -10,8 +10,8 @@ import cv2
 import numpy as np
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_IMAGE = SCRIPT_DIR / "castillo.jpg"
-DEFAULT_STL = SCRIPT_DIR / "castillo_3d.stl"
+DEFAULT_IMAGE = SCRIPT_DIR / "escudo3.0.jpeg"
+DEFAULT_STL = SCRIPT_DIR / "escudo3.0_3d.stl"
 
 
 def _is_grayscale(img_bgr: np.ndarray, sat_threshold: float = 30.0) -> bool:
@@ -19,31 +19,22 @@ def _is_grayscale(img_bgr: np.ndarray, sat_threshold: float = 30.0) -> bool:
     return float(np.mean(hsv[:, :, 1])) < sat_threshold
 
 
-def _outer_background_mask(binary: np.ndarray) -> np.ndarray:
-    """Marca el fondo exterior inundando desde las esquinas por pixeles oscuros."""
-    h, w = binary.shape
-    flood = cv2.bitwise_not(binary)
-    for x, y in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)):
-        if flood[y, x] > 0:
-            cv2.floodFill(flood, None, (x, y), 64)
-    return flood == 64
-
-
 def _height_map_bw(
     img_bgr: np.ndarray,
-    base_mm: float = 2.0,
-    relief_mm: float = 3.0,
+    thickness_mm: float = 2.5,
+    white_cutout: bool = True,
 ) -> np.ndarray:
+    """B/N: por defecto el blanco no se imprime (altura 0) y el negro si."""
     gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
     _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    outer = _outer_background_mask(binary)
-    shield = ~outer
-
     height_map = np.zeros(gray.shape, dtype=np.float32)
-    height_map[shield] = base_mm
-    height_map[shield & (binary == 255)] = base_mm + relief_mm
+    if white_cutout:
+        # Blanco = hueco; negro = material
+        height_map[binary == 0] = thickness_mm
+    else:
+        height_map[binary == 255] = thickness_mm
     return height_map
 
 
@@ -76,6 +67,116 @@ def _height_map_color(img_bgr: np.ndarray) -> np.ndarray:
     return height_map
 
 
+def _add_triangle(facets: list, v1, v2, v3) -> None:
+    facets.append(([0.0, 0.0, 1.0], v1, v2, v3))
+
+
+def _add_quad(facets: list, a, b, c, d) -> None:
+    _add_triangle(facets, a, b, c)
+    _add_triangle(facets, a, c, d)
+
+
+def _mesh_solid_voxels(height_map: np.ndarray, pixel_size_mm: float) -> list:
+    """Prisma solido por pixel con altura > 0 (el blanco/0 no genera geometria)."""
+    facets = []
+    h, w = height_map.shape
+
+    for y in range(h):
+        for x in range(w):
+            z = float(height_map[y, x])
+            if z <= 0:
+                continue
+
+            x0, x1 = x * pixel_size_mm, (x + 1) * pixel_size_mm
+            y0, y1 = (h - y) * pixel_size_mm, (h - (y + 1)) * pixel_size_mm
+
+            # Cara superior (z) e inferior (0)
+            _add_quad(
+                facets,
+                [x0, y0, z],
+                [x0, y1, z],
+                [x1, y1, z],
+                [x1, y0, z],
+            )
+            _add_quad(
+                facets,
+                [x0, y0, 0.0],
+                [x1, y0, 0.0],
+                [x1, y1, 0.0],
+                [x0, y1, 0.0],
+            )
+
+            # Paredes solo donde el vecino esta vacio (ahorra caras internas)
+            if x == 0 or height_map[y, x - 1] <= 0:
+                _add_quad(
+                    facets,
+                    [x0, y0, 0.0],
+                    [x0, y1, 0.0],
+                    [x0, y1, z],
+                    [x0, y0, z],
+                )
+            if x == w - 1 or height_map[y, x + 1] <= 0:
+                _add_quad(
+                    facets,
+                    [x1, y0, 0.0],
+                    [x1, y0, z],
+                    [x1, y1, z],
+                    [x1, y1, 0.0],
+                )
+            if y == 0 or height_map[y - 1, x] <= 0:
+                _add_quad(
+                    facets,
+                    [x0, y0, 0.0],
+                    [x0, y0, z],
+                    [x1, y0, z],
+                    [x1, y0, 0.0],
+                )
+            if y == h - 1 or height_map[y + 1, x] <= 0:
+                _add_quad(
+                    facets,
+                    [x0, y1, 0.0],
+                    [x1, y1, 0.0],
+                    [x1, y1, z],
+                    [x0, y1, z],
+                )
+
+    return facets
+
+
+def _mesh_height_surface(height_map: np.ndarray, pixel_size_mm: float) -> list:
+    """Malla de superficie (modo color / relieve continuo)."""
+    facets = []
+    h, w = height_map.shape
+
+    for y in range(h - 1):
+        for x in range(w - 1):
+            z00 = float(height_map[y, x])
+            z10 = float(height_map[y + 1, x])
+            z01 = float(height_map[y, x + 1])
+            z11 = float(height_map[y + 1, x + 1])
+
+            if z00 == 0 and z10 == 0 and z01 == 0 and z11 == 0:
+                continue
+
+            px0, px1 = x * pixel_size_mm, (x + 1) * pixel_size_mm
+            py0, py1 = (h - y) * pixel_size_mm, (h - (y + 1)) * pixel_size_mm
+
+            _add_triangle(
+                facets,
+                [px0, py0, z00],
+                [px0, py1, z10],
+                [px1, py1, z11],
+            )
+            _add_triangle(
+                facets,
+                [px0, py0, z00],
+                [px1, py1, z11],
+                [px1, py0, z01],
+            )
+
+    return facets
+
+
 def _write_stl(facets: list, output_stl_path: str) -> None:
     with open(output_stl_path, "wb") as f:
         f.write(b"\x00" * 80)
@@ -91,8 +192,8 @@ def image_to_stl(
     output_stl_path: str,
     pixel_size_mm: float = 0.3,
     mode: str = "auto",
-    base_mm: float = 2.0,
-    relief_mm: float = 3.0,
+    thickness_mm: float = 2.5,
+    white_cutout: bool = True,
     max_dim: int = 500,
 ) -> bool:
     print("Cargando y analizando imagen...")
@@ -113,40 +214,26 @@ def image_to_stl(
 
     use_bw = mode == "bw" or (mode == "auto" and _is_grayscale(img))
     if use_bw:
-        print(f"Modo B/N: negro={base_mm} mm, blanco={base_mm + relief_mm} mm")
-        height_map = _height_map_bw(img, base_mm=base_mm, relief_mm=relief_mm)
+        if white_cutout:
+            print(f"Modo B/N: blanco=sin imprimir, negro={thickness_mm} mm")
+        else:
+            print(f"Modo B/N invertido: negro=sin imprimir, blanco={thickness_mm} mm")
+        height_map = _height_map_bw(
+            img,
+            thickness_mm=thickness_mm,
+            white_cutout=white_cutout,
+        )
+        print("Generando geometria solida (prismas)...")
+        facets = _mesh_solid_voxels(height_map, pixel_size_mm)
     else:
         print("Modo color: segmentacion por tonos del escudo")
         height_map = _height_map_color(img)
+        print("Generando geometria 3D y calculando caras...")
+        facets = _mesh_height_surface(height_map, pixel_size_mm)
 
-    h, w = height_map.shape
-    print("Generando geometria 3D y calculando caras...")
-
-    facets = []
-
-    def add_triangle(v1, v2, v3):
-        facets.append(([0.0, 0.0, 1.0], v1, v2, v3))
-
-    for y in range(h - 1):
-        for x in range(w - 1):
-            z00 = float(height_map[y, x])
-            z10 = float(height_map[y + 1, x])
-            z01 = float(height_map[y, x + 1])
-            z11 = float(height_map[y + 1, x + 1])
-
-            if z00 == 0 and z10 == 0 and z01 == 0 and z11 == 0:
-                continue
-
-            px0, px1 = x * pixel_size_mm, (x + 1) * pixel_size_mm
-            py0, py1 = (h - y) * pixel_size_mm, (h - (y + 1)) * pixel_size_mm
-
-            v00 = [px0, py0, z00]
-            v10 = [px0, py1, z10]
-            v01 = [px1, py0, z01]
-            v11 = [px1, py1, z11]
-
-            add_triangle(v00, v10, v11)
-            add_triangle(v00, v11, v01)
+    if not facets:
+        print("Error: no se genero geometria. Revisa contraste blanco/negro de la imagen.")
+        return False
 
     print(f"Guardando STL en: {output_stl_path}")
     _write_stl(facets, output_stl_path)
@@ -178,10 +265,19 @@ def main():
         "--mode",
         choices=("auto", "bw", "color"),
         default="auto",
-        help="auto detecta B/N o color; bw fuerza blanco alto / negro bajo",
+        help="auto detecta B/N o color",
     )
-    parser.add_argument("--base-mm", type=float, default=2.0, help="Altura base B/N (negro)")
-    parser.add_argument("--relief-mm", type=float, default=3.0, help="Relieve extra B/N (blanco)")
+    parser.add_argument(
+        "--thickness-mm",
+        type=float,
+        default=2.5,
+        help="Grosor del material en mm (zonas que se imprimen)",
+    )
+    parser.add_argument(
+        "--print-white",
+        action="store_true",
+        help="Imprime el blanco y deja el negro vacio (por defecto es al reves)",
+    )
     parser.add_argument(
         "--max-dim",
         type=int,
@@ -192,7 +288,9 @@ def main():
 
     if not Path(args.image).exists():
         print(f"Error: coloca la imagen en '{args.image}' o indica otra ruta.")
-        print("Ejemplo: python image_to_stl.py castillo.jpg -o castillo_3d.stl --mode bw")
+        print(
+            "Ejemplo: python image_to_stl.py escudo3.0.jpeg -o escudo3.0_3d.stl --mode bw"
+        )
         raise SystemExit(1)
 
     ok = image_to_stl(
@@ -200,8 +298,8 @@ def main():
         args.output,
         pixel_size_mm=args.pixel_size,
         mode=args.mode,
-        base_mm=args.base_mm,
-        relief_mm=args.relief_mm,
+        thickness_mm=args.thickness_mm,
+        white_cutout=not args.print_white,
         max_dim=args.max_dim,
     )
     raise SystemExit(0 if ok else 1)

@@ -10,6 +10,7 @@ automation-scripts/
 ├── api-integrations/       # WhatsApp Cloud API y alertas modulares
 ├── market-analysis/        # Seguimiento financiero y métricas de mercado
 ├── automation-utilities/   # Herramientas mecánicas (imagen → STL 3D)
+├── business-tools/         # Generadores de documentación comercial (demo)
 ├── requirements.txt
 └── README.md
 ```
@@ -22,14 +23,16 @@ Industrial monitoring, Victron inverter control, and LiFePO4 battery management.
 
 | Script | Description |
 |--------|-------------|
+| `config_loader.py` | Shared config loader: unifies `victron_host` / `victron_ip` for all modules |
 | `victron_industrial_bms_safety.py` | Closed-loop safety supervisor: JK BMS telemetry → Victron GX countermeasures over Modbus TCP |
 | `bms_web_monitor.py` | Real-time Streamlit dashboard (Modbus live + simulation) |
 | `bms_gui_monitor.py` | Desktop tkinter panel for BMS health monitoring |
-| `config.example.json` | Template for plant IP, thresholds, and alert settings |
+| `jk_bms_client.py` | JK BMS TCP client with failure cache and simulation fallback |
+| `config.example.json` | Template for plant IP (`victron_host`), thresholds, and alert settings |
 
 **Victron BMS safety supervisor:**
 ```bash
-# Copy config.example.json → config.json and edit your Cerbo GX IP
+# Copy config.example.json → config.json and edit your Cerbo GX IP (victron_host)
 python solar-telemetry/victron_industrial_bms_safety.py
 ```
 
@@ -58,7 +61,7 @@ Financial tracking tools and market data automation.
 
 | Script | Description |
 |--------|-------------|
-| `data_processor.py` | Cleans raw price feeds and calculates volatility, averages, peaks, and drops |
+| `data_processor.py` | Limpia feeds de precios y calcula volatilidad, media, máximos y mínimos |
 
 **Market data automation:**
 ```bash
@@ -71,17 +74,28 @@ Mechanical / manufacturing helpers.
 
 | Script | Description |
 |--------|-------------|
-| `convert_to_3d.py` | Downloads shield PNG (if missing) and converts to relief STL |
-| `image_to_stl.py` | Color-segmented image → 3D STL converter (OpenCV) |
-| `image_8ff221.png` | Input image for the El Vendrell shield (place in this folder) |
+| `convert_to_3d.py` | Downloads shield image (if missing) and converts to relief STL |
+| `image_to_stl.py` | Image → 3D STL (color segmentation or B/W with white cutout) |
 
 **Image to STL:**
 ```bash
 cd automation-utilities
-python convert_to_3d.py
-# or
-python image_to_stl.py image_8ff221.png -o escudo_vendrell_3d.stl --pixel-size 0.3
+python image_to_stl.py escudo3.0.jpeg -o escudo3.0_3d.stl --mode bw
 ```
+
+### 5. Business Tools (`business-tools/`)
+
+Demo commercial documentation generators (portfolio sample). The generated PDF is gitignored.
+
+| Script | Description |
+|--------|-------------|
+| `generar_dosier.py` | Builds an investment dossier PDF for B-Intelligent (seed-round narrative demo) |
+
+```bash
+python business-tools/generar_dosier.py
+```
+
+> **Note:** Treat market claims in this demo as illustrative unless backed by a cited source. Do not present placeholder figures to real investors.
 
 ## 🛠️ Tech Stack & Skills Demonstrated
 

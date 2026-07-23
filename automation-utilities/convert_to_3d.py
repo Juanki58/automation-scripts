@@ -44,8 +44,12 @@ def main():
     parser.add_argument("-o", "--output", default=DEFAULT_STL, help="STL de salida")
     parser.add_argument("--pixel-size", type=float, default=0.3, help="Tamano mm/pixel")
     parser.add_argument("--mode", choices=("auto", "bw", "color"), default="auto")
-    parser.add_argument("--base-mm", type=float, default=2.0, help="Altura base B/N")
-    parser.add_argument("--relief-mm", type=float, default=3.0, help="Relieve blanco B/N")
+    parser.add_argument("--thickness-mm", type=float, default=2.5, help="Grosor material B/N")
+    parser.add_argument(
+        "--print-white",
+        action="store_true",
+        help="Imprime blanco y deja negro vacio (por defecto: blanco no se imprime)",
+    )
     parser.add_argument("--max-dim", type=int, default=500, help="Lado maximo px (0=sin limite)")
     parser.add_argument("--url", default=DEFAULT_URL, help="URL de descarga si falta la imagen local")
     parser.add_argument(
@@ -77,8 +81,8 @@ def main():
         str(output_path),
         pixel_size_mm=args.pixel_size,
         mode=args.mode,
-        base_mm=args.base_mm,
-        relief_mm=args.relief_mm,
+        thickness_mm=args.thickness_mm,
+        white_cutout=not args.print_white,
         max_dim=args.max_dim,
     )
     raise SystemExit(0 if ok else 1)

@@ -3,7 +3,6 @@ B-Intelligent — BMS Cloud Auditor (Web App)
 Monitor visual en tiempo real con Streamlit.
 """
 
-import json
 import logging
 import math
 import sys
@@ -20,6 +19,7 @@ if str(_API_DIR) not in sys.path:
 
 from whatsapp_alerts import send_whatsapp_alert
 
+from config_loader import load_configuration as _load_shared_configuration
 from jk_bms_client import fetch_all_batteries, merge_battery_telemetry
 
 logging.basicConfig(
@@ -65,87 +65,48 @@ METRIC_ACCENTS = {
     "grid": "#b388ff",
 }
 
+WEB_DEFAULTS = {
+    "default_mode": "real",
+    "sample_interval_s": 5,
+    "soc_sim_min": 35,
+    "soc_sim_max": 45,
+    "cell_count": 16,
+    "cell_spread_v": 0.04,
+    "modbus_reg_system_voltage": 840,
+    "modbus_reg_system_soc": 843,
+    "modbus_reg_system_voltage_scale": 10,
+    "modbus_reg_system_soc_scale": 1,
+    "modbus_reg_system_soc_fallback": None,
+    "modbus_reg_system_soc_fallback_scale": 1,
+    "modbus_reg_ac_consumption_l1": 817,
+    "modbus_reg_ac_consumption_l2": 818,
+    "modbus_reg_ac_consumption_l3": 819,
+    "modbus_reg_pv_power": 850,
+    "modbus_reg_grid_power": 820,
+    "modbus_reg_battery_power": 842,
+    "battery_capacity_kwh": 10.0,
+    "battery_capacity_kwh_per_unit": 10.0,
+    "battery_bank_mode": "parallel",
+    "soc_source": "victron",
+    "soc_alert_warning": 20.0,
+    "soc_alert_critical": 10.0,
+    "whatsapp_alerts_enabled": False,
+    "whatsapp_alert_cooldown_s": 3600,
+    "whatsapp_recipient": "",
+    "whatsapp_template_name": "alerta_bintelligent",
+    "whatsapp_template_language": "es",
+    "plant_name": "B-Intelligent Plant",
+    "inverter_unit_id": 225,
+    "battery_unit_id": None,
+    "modbus_reg_battery_temperature": 282,
+    "modbus_reg_battery_temperature_scale": 10,
+    "batteries": [],
+}
+
 
 def load_configuration(config_path: Path = CONFIG_PATH) -> dict:
-    defaults = {
-        "victron_ip": "192.168.1.100",
-        "modbus_port": 502,
-        "victron_unit_id": 100,
-        "v_cell_critical_high": 3.60,
-        "v_cell_warning_high": 3.45,
-        "v_cell_critical_low": 2.60,
-        "t_critical_high": 55.0,
-        "t_charge_low": 0.0,
-        "default_mode": "simulated",
-        "sample_interval_s": 5,
-        "soc_sim_min": 75,
-        "soc_sim_max": 85,
-        "cell_count": 16,
-        "cell_spread_v": 0.04,
-        "modbus_reg_system_voltage": 840,
-        "modbus_reg_system_soc": 820,
-        "modbus_reg_system_voltage_scale": 10,
-        "modbus_reg_system_soc_scale": 10,
-        "modbus_reg_system_soc_fallback": 843,
-        "modbus_reg_system_soc_fallback_scale": 1,
-        "modbus_reg_ac_consumption_l1": 817,
-        "modbus_reg_ac_consumption_l2": 818,
-        "modbus_reg_ac_consumption_l3": 819,
-        "modbus_reg_pv_power": 850,
-        "modbus_reg_grid_power": 820,
-        "modbus_reg_battery_power": 842,
-        "battery_capacity_kwh": 10.0,
-        "soc_alert_warning": 20.0,
-        "soc_alert_critical": 10.0,
-        "whatsapp_alerts_enabled": False,
-        "whatsapp_alert_cooldown_s": 3600,
-        "whatsapp_recipient": "",
-        "whatsapp_template_name": "alerta_bintelligent",
-        "whatsapp_template_language": "es",
-        "plant_name": "B-Intelligent Plant",
-        "inverter_unit_id": 225,
-        "battery_unit_id": None,
-        "modbus_reg_battery_temperature": 282,
-        "modbus_reg_battery_temperature_scale": 10,
-        "batteries": [],
-    }
-    path = Path(config_path)
-    if not path.exists():
-        return defaults
-    with open(path, encoding="utf-8-sig") as f:
-        loaded = json.load(f)
-    merged = {**defaults, **loaded}
-    if "whatsapp_alerts_enabled" not in loaded and loaded.get("telegram_alerts_enabled") is not None:
-        merged["whatsapp_alerts_enabled"] = loaded["telegram_alerts_enabled"]
-    if "whatsapp_alert_cooldown_s" not in loaded and loaded.get("telegram_alert_cooldown_s") is not None:
-        merged["whatsapp_alert_cooldown_s"] = loaded["telegram_alert_cooldown_s"]
-
-    if merged.get("victron_host"):
-        merged["victron_ip"] = merged["victron_host"]
-
-    jk_hosts = [merged.get(f"jk_host_{i}") for i in range(1, 9) if merged.get(f"jk_host_{i}")]
-    if jk_hosts and not merged.get("batteries"):
-        merged["batteries"] = [
-            {
-                "name": f"Batería {i}",
-                "jk_host": host,
-                "jk_port": merged.get("jk_port", 6481),
-            }
-            for i, host in enumerate(jk_hosts, start=1)
-        ]
-
-    for idx, battery in enumerate(merged.get("batteries", [])):
-        battery.setdefault("id", f"bateria_{idx + 1}")
-        battery.setdefault("enabled", True)
-        battery.setdefault("cell_count", merged.get("cell_count", 16))
-        battery.setdefault("jk_unit_id", 1)
-        battery.setdefault("jk_port", merged.get("jk_port", 6481))
-        flat_host = merged.get(f"jk_host_{idx + 1}")
-        if flat_host:
-            battery["jk_host"] = flat_host
-
-    return merged
-
+    """Carga config compartida + defaults del dashboard web."""
+    return _load_shared_configuration(config_path, defaults=WEB_DEFAULTS)
 
 def _to_signed_int16(value: int) -> int:
     return value - 65536 if value >= 32768 else value
@@ -302,7 +263,10 @@ def render_battery_cells_panel(batteries: list[dict], cfg: dict):
         status = "🟢 Online" if online and not battery.get("error") else "🔴 Offline / estimado"
 
         st.markdown(f"#### {status} · {bank_name}")
-        st.caption(source)
+        if battery.get("soc") is not None:
+            st.caption(f"SoC individual JK: {battery['soc']}% · {source}")
+        else:
+            st.caption(source)
         if battery.get("error"):
             st.warning(f"JK BMS: {battery['error']}")
 
@@ -584,7 +548,7 @@ def read_victron_modbus_telemetry(cfg: dict) -> dict:
         if not client.open():
             raise ConnectionError(f"No se pudo abrir conexión Modbus TCP con {host}:{port} (unit {unit_id})")
 
-        # --- SoC: registro 820, uint16, escala 0.1 (estándar Victron) ---
+        # --- SoC: registro 843 en Cerbo GX (0-100 directo). 820 comparte mapa con grid power. ---
         raw_soc = None
         soc = None
         try:
@@ -597,9 +561,10 @@ def read_victron_modbus_telemetry(cfg: dict) -> dict:
             raw_soc = soc_regs[0]
             soc = raw_soc / cfg["modbus_reg_system_soc_scale"]
             logger.info(
-                "SoC reg %s — raw=%s, escala=0.1, calculado=%.1f%%",
+                "SoC reg %s — raw=%s, escala=%s, calculado=%.1f%%",
                 cfg["modbus_reg_system_soc"],
                 raw_soc,
+                cfg["modbus_reg_system_soc_scale"],
                 soc,
             )
         except Exception as exc:
@@ -613,7 +578,7 @@ def read_victron_modbus_telemetry(cfg: dict) -> dict:
             )
             soc = None
 
-        # Fallback: registro 843 (SOC directo 0-100 en muchos Cerbo GX)
+        # Fallback opcional solo si el registro primario falla o está fuera de rango.
         fallback_reg = cfg.get("modbus_reg_system_soc_fallback")
         if fallback_reg is not None:
             try:
@@ -630,15 +595,6 @@ def read_victron_modbus_telemetry(cfg: dict) -> dict:
                     if soc is None or not (0 <= soc <= 100):
                         raw_soc, soc = raw_fb, soc_fb
                         logger.warning("Usando SoC fallback reg %s (primario inválido)", fallback_reg)
-                    elif abs(soc - soc_fb) > 10:
-                        logger.warning(
-                            "Reg %s (%.1f%%) difiere de fallback %s (%.1f%%) — usando fallback",
-                            cfg["modbus_reg_system_soc"],
-                            soc,
-                            fallback_reg,
-                            soc_fb,
-                        )
-                        raw_soc, soc = raw_fb, soc_fb
             except Exception as exc:
                 logger.error(
                     "ERROR lectura SoC fallback reg %s: %s: %s",
@@ -764,7 +720,19 @@ def fetch_telemetry(mode: str, cfg: dict) -> dict:
         system = read_simulated_telemetry(cfg)
 
     batteries = fetch_all_batteries(cfg, simulated=simulated, sim_t=time.time())
-    return merge_battery_telemetry(system, batteries)
+    merged = merge_battery_telemetry(system, batteries, cfg)
+
+    # Seguro extra: en paralelo el SoC del sistema es solo el del Cerbo GX.
+    if cfg.get("battery_bank_mode", "parallel") == "parallel" and system.get("soc") is not None:
+        merged["soc"] = round(min(max(float(system["soc"]), 0.0), 100.0), 1)
+        merged["soc_source_label"] = "Victron Cerbo GX (sistema completo)"
+
+    merged["autonomy_hours"] = estimate_autonomy_hours(
+        merged.get("soc", 0),
+        cfg.get("battery_capacity_kwh", 10.0),
+        merged.get("house_consumption_w", 0),
+    )
+    return merged
 
 
 def evaluate_plant_status(telemetry: dict, cfg: dict) -> tuple[str, str, str]:
@@ -1025,6 +993,11 @@ def inject_corporate_theme():
                 color: {COLOR_TEXT_MUTED};
                 font-size: 0.75rem;
             }}
+            .soc-source {{
+                color: {COLOR_TEXT_MUTED};
+                font-size: 0.78rem;
+                margin-top: 0.45rem;
+            }}
             .autonomy-line {{
                 color: {COLOR_ACCENT};
                 font-size: 1.05rem;
@@ -1190,17 +1163,19 @@ def inject_corporate_theme():
     )
 
 
-def render_soc_card(soc: float, autonomy_hours: float | None, capacity_kwh: float):
+def render_soc_card(soc: float, autonomy_hours: float | None, capacity_kwh: float, soc_source: str = ""):
     segment_bar = build_soc_segment_bar(soc)
     autonomy_text = format_autonomy(autonomy_hours)
     soc_color = soc_glow_color(soc)
+    source_line = f'<div class="soc-source">Fuente SoC: {soc_source}</div>' if soc_source else ""
     st.markdown(
         f"""
         <div class="soc-card">
-            <div class="soc-label">Estado de Carga</div>
+            <div class="soc-label">Estado de Carga (banco completo)</div>
             <div class="soc-value" style="color:{soc_color};">⚡ SoC: {soc:.1f}%</div>
             {segment_bar}
             <div class="soc-scale"><span>0%</span><span>100%</span></div>
+            {source_line}
             <div class="autonomy-line">⏱ Autonomía estimada: {autonomy_text} · Banco {capacity_kwh:.1f} kWh</div>
         </div>
         """,
@@ -1270,6 +1245,15 @@ def render_dashboard(cfg: dict, mode: str, telemetry: dict):
     t_min = telemetry["min_pack_temperature"]
     now = datetime.now().strftime("%H:%M:%S")
 
+    if mode != MODE_REAL or telemetry.get("source") in ("simulated", "modbus_error"):
+        sim_soc = f"{telemetry['soc']:.1f}%"
+        st.markdown(
+            f'<div class="alert-bar" style="background:#3d2a00;border-color:#ff9f1c;">'
+            f'⚠ Modo <b>{mode}</b> — SoC {sim_soc} es simulado. '
+            f'Selecciona <b>Real (Modbus)</b> en el panel lateral y recarga (F5).</div>',
+            unsafe_allow_html=True,
+        )
+
     if telemetry.get("error"):
         st.markdown(
             f'<div class="alert-bar">⚠ Modbus: {telemetry["error"]} — mostrando respaldo simulado.</div>',
@@ -1283,7 +1267,12 @@ def render_dashboard(cfg: dict, mode: str, telemetry: dict):
         unsafe_allow_html=True,
     )
 
-    render_soc_card(soc, telemetry.get("autonomy_hours"), cfg.get("battery_capacity_kwh", 10.0))
+    render_soc_card(
+        soc,
+        telemetry.get("autonomy_hours"),
+        cfg.get("battery_capacity_kwh", 10.0),
+        telemetry.get("soc_source_label", ""),
+    )
     render_energy_flow_strip(telemetry)
 
     power_value, power_detail = format_house_power(telemetry.get("house_consumption_w", 0.0))
@@ -1347,10 +1336,20 @@ def render_dashboard(cfg: dict, mode: str, telemetry: dict):
         "modbus_error": "Modbus con fallback simulado",
     }.get(telemetry["source"], telemetry["source"])
 
+    jk_soc_debug = " · ".join(
+        f"{b.get('name', '?')}: {b['soc']}%"
+        for b in telemetry.get("batteries", [])
+        if b.get("soc") is not None
+    )
+    soc_debug = f" · Victron: {telemetry.get('victron_soc', telemetry['soc'])}%"
+    if jk_soc_debug:
+        soc_debug += f" · JK [{jk_soc_debug}]"
+
     st.markdown(
         f"""
         <div class="footer-bar">
             Última actualización: {now} · Muestreo cada {cfg["sample_interval_s"]}s · Modo: {mode} · Fuente: {source_label}
+            <br><span style="font-size:0.78rem;color:#9eb8d9;">SoC sistema: {telemetry['soc']:.1f}%{soc_debug}</span>
         </div>
         """,
         unsafe_allow_html=True,

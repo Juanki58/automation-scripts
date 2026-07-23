@@ -1,9 +1,10 @@
 import time
-import json
 import logging
 from pathlib import Path
 
 from pyModbusTCP.client import ModbusClient
+
+from config_loader import load_configuration
 
 # Configuración de logs con formato industrial
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
@@ -11,34 +12,18 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - 
 
 class VictronBmsSafetySupervisor:
     def __init__(self, config_path=None):
-        self.config_path = config_path or (Path(__file__).resolve().parent / "config.json")
-        self.config = self.load_configuration()
+        self.config_path = Path(config_path) if config_path else (
+            Path(__file__).resolve().parent / "config.json"
+        )
+        self.config = load_configuration(self.config_path)
 
         # Inicialización de clientes Modbus para la red industrial
         self.victron_client = ModbusClient(
-            host=self.config["victron_ip"],
+            host=self.config["victron_host"],
             port=self.config["modbus_port"],
             unit_id=self.config["victron_unit_id"],
             auto_open=True
         )
-
-    def load_configuration(self):
-        """Carga los umbrales de seguridad desde un archivo JSON externo."""
-        try:
-            with open(self.config_path, 'r') as f:
-                return json.load(f)
-        except FileNotFoundError:
-            logging.error(f"Archivo de configuración {self.config_path} no encontrado. Cargando valores por defecto corporativos.")
-            return {
-                "victron_ip": "192.168.1.60",
-                "modbus_port": 502,
-                "victron_unit_id": 100,  # ID del sistema CCGX / Cerbo GX
-                "v_cell_critical_high": 3.60,
-                "v_cell_warning_high": 3.45,
-                "v_cell_critical_low": 2.60,
-                "t_critical_high": 55.0,
-                "t_charge_low": 0.0
-            }
 
     def read_bms_telemetry(self):
         """

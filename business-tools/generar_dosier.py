@@ -50,8 +50,8 @@ DOSIER = {
         "sin una capa de software unificada que actúe en tiempo real sobre ambos ecosistemas.\n\n"
         "Las consecuencias son costosas: degradación acelerada de celdas, paradas no planificadas, "
         "pérdida de garantías del fabricante y riesgo de incendio en condiciones térmicas extremas. "
-        "Hoy, el 68 % de las incidencias en plantas C&I provienen de desequilibrios de celda no "
-        "detectados a tiempo (fuente: informe sectorial Energy Storage Report 2025)."
+        "Los desequilibrios de celda no detectados a tiempo son una causa frecuente de degradación "
+        "prematura y paradas no planificadas en plantas C&I."
     ),
 
     "solucion": (
@@ -61,8 +61,8 @@ DOSIER = {
         "  • Escribe contramedidas activas en registros Modbus TCP del Cerbo GX / Color Control.\n"
         "  • Limita corriente de carga/descarga o fuerza apagado de emergencia del inversor.\n"
         "  • Registra cada evento con trazabilidad industrial (logs auditables).\n\n"
-        "El resultado: protección proactiva 24/7 que extiende la vida útil del banco de baterías "
-        "un 30-40 % y elimina el riesgo de fallo catastrófico por desbalance de celda."
+        "El resultado: protección proactiva 24/7 orientada a reducir el riesgo de fallo "
+        "catastrófico por desbalance de celda y a preservar la vida útil del banco de baterías."
     ),
 
     "mercado": {

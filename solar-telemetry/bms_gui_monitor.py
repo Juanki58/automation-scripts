@@ -3,10 +3,11 @@ B-Intelligent — BMS Cloud Auditor
 Panel gráfico de monitorización en tiempo real (tkinter / Windows).
 """
 
-import json
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
+
+from config_loader import load_configuration
 
 SAMPLE_INTERVAL_MS = 5000
 CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
@@ -23,24 +24,6 @@ COLOR_GREEN = "#00e676"
 COLOR_YELLOW = "#ffc107"
 COLOR_RED = "#ff5252"
 COLOR_GREEN_DARK = "#0d4d2a"
-
-
-def load_configuration(config_path: Path = CONFIG_PATH) -> dict:
-    defaults = {
-        "victron_ip": "192.168.1.100",
-        "modbus_port": 502,
-        "victron_unit_id": 100,
-        "v_cell_critical_high": 3.60,
-        "v_cell_warning_high": 3.45,
-        "v_cell_critical_low": 2.60,
-        "t_critical_high": 55.0,
-        "t_charge_low": 0.0,
-    }
-    path = Path(config_path)
-    if not path.exists():
-        return defaults
-    with open(path, encoding="utf-8") as f:
-        return {**defaults, **json.load(f)}
 
 
 def read_bms_telemetry() -> dict:
@@ -116,7 +99,7 @@ class BmsCloudAuditorApp(tk.Tk):
 
         tk.Label(
             header,
-            text=f"Color Control GX  ·  {self.config['victron_ip']}:{self.config['modbus_port']}  ·  Unit ID {self.config['victron_unit_id']}",
+            text=f"Color Control GX  ·  {self.config['victron_host']}:{self.config['modbus_port']}  ·  Unit ID {self.config['victron_unit_id']}",
             font=("Helvetica", 10),
             fg=COLOR_TEXT_MUTED,
             bg=COLOR_BG,

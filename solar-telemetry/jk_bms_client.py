@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 JK_CELL_VOLTAGE_REG = 0x1200
 JK_MAX_MIN_CELL_REG = 0x1248
 JK_BATTERY_TEMP_REG = 0x12A4
+JK_SOC_REG = 0x12A6
 JK_DEFAULT_PORT = 502
 JK_DEFAULT_UNIT_ID = 1
 JK_CELL_VOLTAGE_SCALE = 1000.0
@@ -116,6 +117,29 @@ def read_jk_bms_bank(bank_cfg: dict, simulated: bool = False, sim_t: float | Non
         except Exception as exc:
             logger.warning("JK %s: no se leyó temperatura: %s", bank_name, exc)
 
+        soc = None
+        try:
+            soc_reg = int(bank_cfg.get("jk_soc_reg", JK_SOC_REG))
+            soc_regs = client.read_holding_registers(soc_reg, 1)
+            if soc_regs:
+                word = soc_regs[0]
+                soc_high = (word >> 8) & 0xFF
+                soc_low = word & 0xFF
+                if 0 < soc_high <= 100:
+                    soc = soc_high
+                elif 0 < soc_low <= 100:
+                    soc = soc_low
+                logger.info(
+                    "JK %s SoC — reg 0x%X: high=%s low=%s → %s%%",
+                    bank_name,
+                    soc_reg,
+                    soc_high,
+                    soc_low,
+                    soc,
+                )
+        except Exception as exc:
+            logger.warning("JK %s: no se leyó SoC: %s", bank_name, exc)
+
         v_max = max(cell_voltages)
         v_min = min(cell_voltages)
 
@@ -143,6 +167,7 @@ def read_jk_bms_bank(bank_cfg: dict, simulated: bool = False, sim_t: float | Non
             "min_cell_index": min_cell_idx,
             "max_pack_temperature": temperature if temperature is not None else 25.0,
             "min_pack_temperature": (temperature - 1.0) if temperature is not None else 24.0,
+            "soc": soc,
             "cell_voltage_source": f"JK BMS v19 Modbus ({host})",
             "jk_online": True,
             "jk_host": host,
@@ -175,6 +200,7 @@ def _read_simulated_bank(bank_cfg: dict, sim_t: float | None = None) -> dict[str
     ]
 
     temp = round(27.5 + 1.5 * math.sin(t / 40 + seed * 0.05), 1)
+    soc = round(68 + 4 * math.sin(t / 50 + seed * 0.07), 1)
     return {
         "id": bank_id,
         "name": bank_name,
@@ -186,6 +212,7 @@ def _read_simulated_bank(bank_cfg: dict, sim_t: float | None = None) -> dict[str
         "min_cell_index": cell_voltages.index(min(cell_voltages)) + 1,
         "max_pack_temperature": temp,
         "min_pack_temperature": round(temp - 1.2, 1),
+        "soc": soc,
         "cell_voltage_source": "Simulación JK BMS v19",
         "jk_online": True,
         "jk_host": bank_cfg.get("jk_host"),
@@ -218,9 +245,48 @@ def normalize_battery_configs(cfg: dict) -> list[dict]:
     ]
 
 
-def merge_battery_telemetry(system_telemetry: dict, batteries: list[dict]) -> dict:
+def _aggregate_parallel_soc(bank_socs: list[float]) -> float:
+    """Baterías en paralelo comparten el mismo % de carga → media, nunca suma."""
+    if not bank_socs:
+        return 0.0
+    return round(sum(bank_socs) / len(bank_socs), 1)
+
+
+def _resolve_system_soc(system_telemetry: dict, batteries: list[dict], cfg: dict) -> tuple[float, str]:
+    victron_soc = system_telemetry.get("soc")
+    bank_mode = cfg.get("battery_bank_mode", "parallel")
+
+    if victron_soc is not None:
+        victron_soc = round(min(max(float(victron_soc), 0.0), 100.0), 1)
+
+    # Banco paralelo: el Cerbo GX mide el pack completo — nunca sumar ni promediar JK.
+    if bank_mode == "parallel" and victron_soc is not None:
+        return victron_soc, "Victron Cerbo GX (sistema completo)"
+
+    if cfg.get("soc_source") == "jk":
+        jk_socs = [
+            b["soc"]
+            for b in batteries
+            if b.get("soc") is not None and b.get("jk_online") and not b.get("error")
+        ]
+        if jk_socs:
+            return _aggregate_parallel_soc(jk_socs), f"JK BMS v19 — media {len(jk_socs)} bancos"
+
+    if victron_soc is not None:
+        return victron_soc, "Victron Modbus"
+
+    return 0.0, "desconocido"
+
+
+def merge_battery_telemetry(system_telemetry: dict, batteries: list[dict], cfg: dict | None = None) -> dict:
     """Combina telemetría Victron/simulada con datos JK por banco."""
+    cfg = cfg or {}
     merged = {**system_telemetry, "batteries": batteries}
+
+    soc, soc_label = _resolve_system_soc(system_telemetry, batteries, cfg)
+    merged["soc"] = soc
+    merged["soc_source_label"] = soc_label
+    merged["victron_soc"] = system_telemetry.get("soc")
 
     jk_banks = [b for b in batteries if b.get("cell_voltages") or b.get("cells")]
     if not jk_banks:

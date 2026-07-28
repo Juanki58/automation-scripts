@@ -1,0 +1,9 @@
+{
+  "bind_host": "127.0.0.1",
+  "bind_port": 8502,
+  "ticker": "AMBQ",
+  "company_name": "Ambiq Micro",
+  "history_period": "3mo",
+  "refresh_seconds": 60,
+  "watchlist": ["AMBQ"]
+}

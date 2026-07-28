@@ -3,6 +3,7 @@ Dosier_Inversion_B-Intelligent.pdf
 
 # Configuración local con datos privados (IP real del Color Control GX)
 solar-telemetry/config.json
+market-analysis/config.json
 
 # Artefactos locales de ejecución
 __pycache__/

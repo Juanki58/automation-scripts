@@ -2,6 +2,17 @@
 
 Welcome to my public repository. This space is dedicated to showcasing clean, production-ready automation scripts, data pipelines, and system configurations designed to optimize business workflows and system efficiency.
 
+## Servicios separados (no mezclar)
+
+| Qué | Carpeta | URL / puerto |
+|-----|---------|----------------|
+| **Monitor baterías / Victron / JK BMS** | `solar-telemetry/` | `http://0.0.0.0:8501` |
+| **Ambiq / mercado (AMBQ)** | `market-analysis/` | `http://127.0.0.1:8502` |
+
+Cada módulo tiene su propio `config.json`, README y puerto Streamlit.
+
+---
+
 ## 📂 Repository Structure
 
 ```
@@ -55,15 +66,34 @@ WhatsApp Cloud API integration and modular alerting.
 python api-integrations/system_monitor_backup.py
 ```
 
+**BMS web monitor (Streamlit):**
+```bash
+streamlit run solar-telemetry/bms_web_monitor.py
+# → http://0.0.0.0:8501
+```
+
+Ver `solar-telemetry/README.md`.
+
 ### 3. Market Analysis (`market-analysis/`)
 
-Financial tracking tools and market data automation.
+**Solo finanzas — Ambiq (AMBQ).** Puerto y host distintos al BMS.
 
 | Script | Description |
 |--------|-------------|
-| `data_processor.py` | Limpia feeds de precios y calcula volatilidad, media, máximos y mínimos |
+| `ambiq_monitor.py` | Dashboard Streamlit de cotización AMBQ (precio, histórico, volatilidad) |
+| `ambiq_data.py` | Descarga datos vía yfinance |
+| `data_processor.py` | Métricas de mercado (media, volatilidad, extremos) |
+| `config.example.json` | Host `127.0.0.1`, puerto `8502` |
 
-**Market data automation:**
+**Ambiq market monitor:**
+```bash
+streamlit run market-analysis/ambiq_monitor.py
+# → http://127.0.0.1:8502  (local, no comparte IP/puerto con la planta)
+```
+
+Ver `market-analysis/README.md`.
+
+**Market data CLI (genérico):**
 ```bash
 python market-analysis/data_processor.py
 ```

@@ -22,6 +22,7 @@ automation-scripts/
 ├── market-analysis/        # Seguimiento financiero y métricas de mercado
 ├── automation-utilities/   # Herramientas mecánicas (imagen → STL 3D)
 ├── business-tools/         # Generadores de documentación comercial (demo)
+├── scripts/windows/        # Autostart y gestión de servicios Windows
 ├── requirements.txt
 └── README.md
 ```
@@ -126,6 +127,29 @@ python business-tools/generar_dosier.py
 ```
 
 > **Note:** Treat market claims in this demo as illustrative unless backed by a cited source. Do not present placeholder figures to real investors.
+
+### 6. Windows Autostart (`scripts/windows/`)
+
+Scheduled-task-based autostart for all plant services on Windows login.
+
+| Script | Description |
+|--------|-------------|
+| `start-plant-services.ps1` | Starts Docker/Home Assistant, BMS monitor (:8501), Ambiq monitor (:8502) |
+| `stop-plant-services.ps1` | Stops BMS and Ambiq Streamlit processes (Docker untouched) |
+| `register-autostart.ps1` | Creates a Windows scheduled task (`PlantServices-Autostart`) to run on login |
+
+**Register autostart (run once as your user):**
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\windows\register-autostart.ps1
+```
+
+**Manual start/stop:**
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\windows\start-plant-services.ps1
+powershell -ExecutionPolicy Bypass -File scripts\windows\stop-plant-services.ps1
+```
+
+Log: `%LOCALAPPDATA%\plant-services\startup.log`
 
 ## 🛠️ Tech Stack & Skills Demonstrated
 

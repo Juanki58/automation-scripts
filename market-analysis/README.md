@@ -4,7 +4,7 @@
 
 | Servicio | Carpeta | URL por defecto |
 |----------|---------|-----------------|
-| Monitor baterías / Victron / JK | `solar-telemetry/` | `http://0.0.0.0:8501` |
+| Monitor baterías / Victron / JK | Repo `../solar-telemetry` | `http://0.0.0.0:8501` |
 | Monitor Ambiq / mercado | `market-analysis/` | `http://127.0.0.1:8502` |
 
 ## Arranque

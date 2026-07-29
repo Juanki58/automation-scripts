@@ -4,6 +4,11 @@
 $ErrorActionPreference = "Continue"
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$SolarTelemetryRoot = if ($env:SOLAR_TELEMETRY_ROOT) {
+    $env:SOLAR_TELEMETRY_ROOT
+} else {
+    (Resolve-Path (Join-Path $RepoRoot "..\solar-telemetry")).Path
+}
 $LogDir = Join-Path $env:LOCALAPPDATA "plant-services"
 $LogFile = Join-Path $LogDir "startup.log"
 
@@ -81,7 +86,8 @@ function Start-StreamlitApp {
         [string]$Name,
         [string]$ScriptPath,
         [int]$Port,
-        [string]$Address = "0.0.0.0"
+        [string]$Address = "0.0.0.0",
+        [string]$WorkingDirectory = $RepoRoot
     )
 
     if (Test-PortListening -Port $Port) {
@@ -113,21 +119,23 @@ function Start-StreamlitApp {
     Start-Process `
         -FilePath $python.Exe `
         -ArgumentList $allArgs `
-        -WorkingDirectory $RepoRoot `
+        -WorkingDirectory $WorkingDirectory `
         -WindowStyle Hidden `
         | Out-Null
 }
 
 Write-Log "=== Arranque servicios planta ==="
 Write-Log "Repo: $RepoRoot"
+Write-Log "Solar telemetry: $SolarTelemetryRoot"
 
 Start-DockerService
 
 Start-StreamlitApp `
     -Name "BMS monitor" `
-    -ScriptPath (Join-Path $RepoRoot "solar-telemetry\bms_web_monitor.py") `
+    -ScriptPath (Join-Path $SolarTelemetryRoot "bms_web_monitor.py") `
     -Port 8501 `
-    -Address "0.0.0.0"
+    -Address "0.0.0.0" `
+    -WorkingDirectory $SolarTelemetryRoot
 
 Start-StreamlitApp `
     -Name "Ambiq monitor" `

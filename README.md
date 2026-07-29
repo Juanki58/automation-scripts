@@ -4,12 +4,12 @@ Welcome to my public repository. This space is dedicated to showcasing clean, pr
 
 ## Servicios separados (no mezclar)
 
-| Qué | Carpeta | URL / puerto |
-|-----|---------|----------------|
-| **Monitor baterías / Victron / JK BMS** | `solar-telemetry/` | `http://0.0.0.0:8501` |
+| Qué | Dónde | URL / puerto |
+|-----|-------|----------------|
+| **Monitor baterías / Victron / JK BMS** | Repo aparte: [`../solar-telemetry`](../solar-telemetry) (`C:\Users\juanc\projects\solar-telemetry`) | `http://0.0.0.0:8501` |
 | **Ambiq / mercado (AMBQ)** | `market-analysis/` | `http://127.0.0.1:8502` |
 
-Cada módulo tiene su propio `config.json`, README y puerto Streamlit.
+Cada servicio tiene su propio `config.json`, README y puerto Streamlit.
 
 ---
 
@@ -17,7 +17,7 @@ Cada módulo tiene su propio `config.json`, README y puerto Streamlit.
 
 ```
 automation-scripts/
-├── solar-telemetry/        # Victron GX, BMS LiFePO4, monitorización industrial
+├── solar-telemetry/        # Stub → apunta al repo solar-telemetry
 ├── api-integrations/       # WhatsApp Cloud API y alertas modulares
 ├── market-analysis/        # Seguimiento financiero y métricas de mercado
 ├── automation-utilities/   # Herramientas mecánicas (imagen → STL 3D)
@@ -29,29 +29,19 @@ automation-scripts/
 
 ## 📊 Repository Contents
 
-### 1. Solar Telemetry (`solar-telemetry/`)
+### 1. Solar Telemetry → repo independiente
 
-Industrial monitoring, Victron inverter control, and LiFePO4 battery management.
+El monitor Victron / JK BMS se extrajo a:
 
-| Script | Description |
-|--------|-------------|
-| `config_loader.py` | Shared config loader: unifies `victron_host` / `victron_ip` for all modules |
-| `victron_industrial_bms_safety.py` | Closed-loop safety supervisor: JK BMS telemetry → Victron GX countermeasures over Modbus TCP |
-| `bms_web_monitor.py` | Real-time Streamlit dashboard (Modbus live + simulation) |
-| `bms_gui_monitor.py` | Desktop tkinter panel for BMS health monitoring |
-| `jk_bms_client.py` | JK BMS TCP client with failure cache and simulation fallback |
-| `config.example.json` | Template for plant IP (`victron_host`), thresholds, and alert settings |
+**`C:\Users\juanc\projects\solar-telemetry`**
 
-**Victron BMS safety supervisor:**
-```bash
-# Copy config.example.json → config.json and edit your Cerbo GX IP (victron_host)
-python solar-telemetry/victron_industrial_bms_safety.py
+```powershell
+cd C:\Users\juanc\projects\solar-telemetry
+python -m streamlit run bms_web_monitor.py
+# → http://0.0.0.0:8501
 ```
 
-**BMS web monitor (Streamlit):**
-```bash
-streamlit run solar-telemetry/bms_web_monitor.py
-```
+Ver el README de ese repo. En este árbol solo queda un stub en `solar-telemetry/`.
 
 ### 2. API Integrations (`api-integrations/`)
 
@@ -66,14 +56,6 @@ WhatsApp Cloud API integration and modular alerting.
 ```bash
 python api-integrations/system_monitor_backup.py
 ```
-
-**BMS web monitor (Streamlit):**
-```bash
-streamlit run solar-telemetry/bms_web_monitor.py
-# → http://0.0.0.0:8501
-```
-
-Ver `solar-telemetry/README.md`.
 
 ### 3. Market Analysis (`market-analysis/`)
 
@@ -134,7 +116,7 @@ Scheduled-task-based autostart for all plant services on Windows login.
 
 | Script | Description |
 |--------|-------------|
-| `start-plant-services.ps1` | Starts Docker/Home Assistant, BMS monitor (:8501), Ambiq monitor (:8502) |
+| `start-plant-services.ps1` | Starts Docker/Home Assistant, BMS monitor (:8501 from `../solar-telemetry`), Ambiq (:8502) |
 | `stop-plant-services.ps1` | Stops BMS and Ambiq Streamlit processes (Docker untouched) |
 | `register-autostart.ps1` | Creates a Windows scheduled task (`PlantServices-Autostart`) to run on login |
 

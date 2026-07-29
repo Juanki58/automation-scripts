@@ -8,7 +8,7 @@ import requests
 from image_to_stl import image_to_stl
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_URL = "https://images.prodia.xyz/8ff221ec-6d8c-4f7f-bf2a-43d9229f3d9d.png"
+DEFAULT_URL = "https://raw.githubusercontent.com/Juanki58/imagenes-impresion-3d/main/image_8ff221.png"
 DEFAULT_IMAGE = SCRIPT_DIR / "image_8ff221.png"
 DEFAULT_STL = SCRIPT_DIR / "escudo_vendrell_3d.stl"
 

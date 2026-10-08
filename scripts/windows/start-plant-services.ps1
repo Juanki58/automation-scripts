@@ -1,9 +1,15 @@
 # Arranca servicios de planta al iniciar sesión en Windows.
-# Home Assistant (Docker) + monitor BMS (8501) + Ambiq (8502).
+# Home Assistant (Docker) + monitor BMS (8501, repo hermano) + Ambiq (8502).
 
 $ErrorActionPreference = "Continue"
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$ProjectsRoot = (Resolve-Path (Join-Path $RepoRoot "..")).Path
+$SolarRoot = if ($env:SOLAR_TELEMETRY_ROOT) {
+    $env:SOLAR_TELEMETRY_ROOT
+} else {
+    Join-Path $ProjectsRoot "solar-telemetry"
+}
 $LogDir = Join-Path $env:LOCALAPPDATA "plant-services"
 $LogFile = Join-Path $LogDir "startup.log"
 
@@ -80,6 +86,7 @@ function Start-StreamlitApp {
     param(
         [string]$Name,
         [string]$ScriptPath,
+        [string]$WorkingDirectory,
         [int]$Port,
         [string]$Address = "0.0.0.0"
     )
@@ -100,6 +107,12 @@ function Start-StreamlitApp {
         return
     }
 
+    $workDir = if ($WorkingDirectory -and (Test-Path $WorkingDirectory)) {
+        $WorkingDirectory
+    } else {
+        $RepoRoot
+    }
+
     $streamlitArgs = @(
         "-m", "streamlit", "run", $ScriptPath,
         "--server.port", "$Port",
@@ -108,30 +121,38 @@ function Start-StreamlitApp {
     )
 
     $allArgs = @($python.Args + $streamlitArgs) -join " "
-    Write-Log "Iniciando $Name en :$Port ($ScriptPath)"
+    Write-Log "Iniciando $Name en :$Port ($ScriptPath) cwd=$workDir"
 
     Start-Process `
         -FilePath $python.Exe `
         -ArgumentList $allArgs `
-        -WorkingDirectory $RepoRoot `
+        -WorkingDirectory $workDir `
         -WindowStyle Hidden `
         | Out-Null
 }
 
 Write-Log "=== Arranque servicios planta ==="
 Write-Log "Repo: $RepoRoot"
+Write-Log "SolarTelemetry: $SolarRoot"
 
 Start-DockerService
 
-Start-StreamlitApp `
-    -Name "BMS monitor" `
-    -ScriptPath (Join-Path $RepoRoot "solar-telemetry\bms_web_monitor.py") `
-    -Port 8501 `
-    -Address "0.0.0.0"
+$bmsScript = Join-Path $SolarRoot "bms_web_monitor.py"
+if (Test-Path $bmsScript) {
+    Start-StreamlitApp `
+        -Name "BMS monitor" `
+        -ScriptPath $bmsScript `
+        -WorkingDirectory $SolarRoot `
+        -Port 8501 `
+        -Address "0.0.0.0"
+} else {
+    Write-Log "BMS omitido: no hay checkout en $SolarRoot (ver https://github.com/Juanki58/solar-telemetry)."
+}
 
 Start-StreamlitApp `
     -Name "Ambiq monitor" `
     -ScriptPath (Join-Path $RepoRoot "market-analysis\ambiq_monitor.py") `
+    -WorkingDirectory $RepoRoot `
     -Port 8502 `
     -Address "127.0.0.1"
 

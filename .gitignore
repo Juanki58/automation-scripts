@@ -1,12 +1,18 @@
 # Documentos de negocio confidenciales (generados localmente)
 Dosier_Inversion_B-Intelligent.pdf
 
-# Configuración local con datos privados (IP real del Color Control GX)
-solar-telemetry/config.json
+# Configuración local con datos privados
 market-analysis/config.json
+
+# No volver a versionar un árbol BMS completo aquí (vive en Juanki58/solar-telemetry)
+solar-telemetry/**/*.py
+solar-telemetry/**/*.json
+solar-telemetry/**/.streamlit/
 
 # Artefactos locales de ejecución
 __pycache__/
 *.tar.gz
 *.stl
 automation-utilities/image_8ff221.png
+.env
+*.log
